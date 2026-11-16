@@ -355,6 +355,9 @@ fn eval_instruction<D: DebugContext>(
         }
         Instruction::StoreVariable { var_id, src } => {
             let value = ctx.collect_reg(*src, *span)?;
+            ctx.engine_state
+                .get_var(*var_id)
+                .validate_assignment(&value, *span)?;
             ctx.stack.add_var(*var_id, value);
             Ok(Continue)
         }
@@ -612,11 +615,13 @@ fn eval_instruction<D: DebugContext>(
             let list_span = list_value.span();
             let items_span = items.span();
             let mut list = list_value.into_list()?;
-            list.extend(
-                items
-                    .into_list()
-                    .map_err(|_| ShellError::CannotSpreadAsList { span: items_span })?,
-            );
+            if !matches!(items, Value::Nothing { .. }) {
+                list.extend(
+                    items
+                        .into_list()
+                        .map_err(|_| ShellError::CannotSpreadAsList { span: items_span })?,
+                );
+            }
             ctx.put_reg(*src_dst, Value::list(list, list_span).into_pipeline_data());
             Ok(Continue)
         }
@@ -648,6 +653,11 @@ fn eval_instruction<D: DebugContext>(
             let record_span = record_value.span();
             let items_span = items.span();
             let mut record = record_value.into_record()?;
+            let items = if matches!(items, Value::Nothing { .. }) {
+                Value::record(Record::new(), items_span)
+            } else {
+                items
+            };
             // Not using .extend() here because it doesn't handle duplicates
             for (key, val) in items
                 .into_record()
@@ -961,7 +971,9 @@ fn binary_op(
             Comparison::Has => lhs_val.has(op_span, &rhs_val, span)?,
             Comparison::NotHas => lhs_val.not_has(op_span, &rhs_val, span)?,
             Comparison::StartsWith => lhs_val.starts_with(op_span, &rhs_val, span)?,
+            Comparison::NotStartsWith => lhs_val.not_starts_with(op_span, &rhs_val, span)?,
             Comparison::EndsWith => lhs_val.ends_with(op_span, &rhs_val, span)?,
+            Comparison::NotEndsWith => lhs_val.not_ends_with(op_span, &rhs_val, span)?,
         },
         Operator::Math(mat) => match mat {
             Math::Add => lhs_val.add(op_span, &rhs_val, span)?,

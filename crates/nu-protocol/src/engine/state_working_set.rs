@@ -659,6 +659,11 @@ impl<'a> StateWorkingSet<'a> {
         &self.permanent_state.config
     }
 
+    pub fn set_variable_annotation(&mut self, var_id: VarId, ty: Type) {
+        let offset = var_id.get() - self.permanent_state.num_vars();
+        self.delta.vars[offset].type_annotation = Some(ty);
+    }
+
     pub fn set_variable_type(&mut self, var_id: VarId, ty: Type) {
         let num_permanent_vars = self.permanent_state.num_vars();
         if var_id.get() < num_permanent_vars {

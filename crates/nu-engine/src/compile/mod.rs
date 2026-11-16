@@ -1,5 +1,5 @@
 use nu_protocol::{
-    CompileError, IntoSpanned, RegId, Span,
+    CompileError, IntoSpanned, RegId, Span, Spanned,
     ast::{Block, Expr, Pipeline, PipelineRedirection, RedirectionSource, RedirectionTarget},
     engine::StateWorkingSet,
     ir::{Instruction, IrBlock, RedirectMode},
@@ -181,8 +181,8 @@ fn compile_pipeline(
         };
 
         let redirect_modes = RedirectModes {
-            out: spec_redirect_modes.out.or(next_redirect_modes.out),
-            err: spec_redirect_modes.err.or(next_redirect_modes.err),
+            out: spec_redirect_modes.out.clone().or(next_redirect_modes.out),
+            err: spec_redirect_modes.err.clone().or(next_redirect_modes.err),
         };
 
         compile_expression(
@@ -194,12 +194,28 @@ fn compile_pipeline(
             out_reg,
         )?;
 
-        // only clean up the redirection if current element is not
-        // a subexpression.  The subexpression itself already clean it.
-        if !is_subexpression(&element.expr.expr) {
-            // Clean up the redirection
-            finish_redirection(builder, redirect_modes, out_reg)?;
-        }
+        // A file belongs to the pipeline element that opened it. Branches and
+        // subexpressions inherit its destination, but must not close it.
+        let inherited_cleanup = |mode: Option<Spanned<RedirectMode>>| {
+            mode.filter(|mode| !matches!(mode.item, RedirectMode::File { .. }))
+        };
+        let cleanup_modes = RedirectModes {
+            out: spec_redirect_modes.out.or_else(|| {
+                if is_subexpression(&element.expr.expr) {
+                    None
+                } else {
+                    inherited_cleanup(redirect_modes.out)
+                }
+            }),
+            err: spec_redirect_modes.err.or_else(|| {
+                if is_subexpression(&element.expr.expr) {
+                    None
+                } else {
+                    inherited_cleanup(redirect_modes.err)
+                }
+            }),
+        };
+        finish_redirection(builder, cleanup_modes, out_reg)?;
 
         // The next pipeline element takes input from this output
         in_reg = Some(out_reg);

@@ -2235,7 +2235,7 @@ impl PartialOrd for Value {
         // Compare two floating point numbers. The decision interval for equality is dynamically
         // scaled as the value being compared increases in magnitude.
         fn compare_floats(val: f64, other: f64) -> Option<Ordering> {
-            let prec = f64::EPSILON.max(val.abs() * f64::EPSILON);
+            let prec = f64::EPSILON.max(val.abs().max(other.abs()) * f64::EPSILON);
 
             if (other - val).abs() < prec {
                 return Some(Ordering::Equal);
@@ -3890,6 +3890,48 @@ impl Value {
         }
     }
 
+    pub fn not_starts_with(&self, op: Span, rhs: &Value, span: Span) -> Result<Value, ShellError> {
+        match (self, rhs) {
+            (Value::String { val: lhs, .. }, Value::String { val: rhs, .. }) => {
+                Ok(Value::bool(!lhs.starts_with(rhs), span))
+            }
+            (Value::Custom { val: lhs, .. }, rhs) => lhs.operation(
+                self.span(),
+                Operator::Comparison(Comparison::NotStartsWith),
+                op,
+                rhs,
+            ),
+            _ => Err(operator_type_error(
+                Operator::Comparison(Comparison::NotStartsWith),
+                op,
+                self,
+                rhs,
+                |val| matches!(val, Value::String { .. }),
+            )),
+        }
+    }
+
+    pub fn not_ends_with(&self, op: Span, rhs: &Value, span: Span) -> Result<Value, ShellError> {
+        match (self, rhs) {
+            (Value::String { val: lhs, .. }, Value::String { val: rhs, .. }) => {
+                Ok(Value::bool(!lhs.ends_with(rhs), span))
+            }
+            (Value::Custom { val: lhs, .. }, rhs) => lhs.operation(
+                self.span(),
+                Operator::Comparison(Comparison::NotEndsWith),
+                op,
+                rhs,
+            ),
+            _ => Err(operator_type_error(
+                Operator::Comparison(Comparison::NotEndsWith),
+                op,
+                self,
+                rhs,
+                |val| matches!(val, Value::String { .. }),
+            )),
+        }
+    }
+
     pub fn bit_or(&self, op: Span, rhs: &Value, span: Span) -> Result<Value, ShellError> {
         match (self, rhs) {
             (Value::Int { val: lhs, .. }, Value::Int { val: rhs, .. }) => {
@@ -4556,5 +4598,44 @@ mod tests {
         assert!(Value::test_glob("*.rs").coerce_bool().is_err());
         assert!(Value::test_binary(vec![1, 2, 3]).coerce_bool().is_err());
         assert!(Value::test_duration(3600).coerce_bool().is_err());
+    }
+}
+
+#[cfg(test)]
+mod language_correctness_tests {
+    use super::*;
+
+    #[test]
+    fn float_equality_is_symmetric_near_power_of_two() {
+        let a = Value::test_float(2.0);
+        let b = Value::test_float(f64::from_bits(2.0f64.to_bits() + 1));
+        assert!(a == b);
+        assert_eq!(a == b, b == a);
+        assert_eq!(a.partial_cmp(&b), b.partial_cmp(&a).map(Ordering::reverse));
+    }
+
+    #[test]
+    fn negated_string_operations_reject_non_strings() {
+        let span = Span::new(10, 15);
+        let value = Value::string("abc", span);
+        let prefix = Value::string("a", span);
+        assert_eq!(
+            value.not_starts_with(span, &prefix, span).unwrap(),
+            Value::bool(false, span)
+        );
+        assert_eq!(
+            value.not_ends_with(span, &prefix, span).unwrap(),
+            Value::bool(true, span)
+        );
+        assert!(
+            value
+                .not_starts_with(span, &Value::int(1, span), span)
+                .is_err()
+        );
+        assert!(
+            Value::int(1, span)
+                .not_ends_with(span, &prefix, span)
+                .is_err()
+        );
     }
 }

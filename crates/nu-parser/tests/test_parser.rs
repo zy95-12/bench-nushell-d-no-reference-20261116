@@ -3072,3 +3072,94 @@ mod record {
         );
     }
 }
+
+#[test]
+fn pipeline_retains_all_matching_output_types() {
+    for continuation in ["take-int", "take-string"] {
+        let engine = EngineState::new();
+        let mut ws = StateWorkingSet::new(&engine);
+        for signature in [
+            Signature::build("choose")
+                .input_output_types(vec![(Type::Int, Type::String), (Type::Int, Type::Int)]),
+            Signature::build("take-int").input_output_types(vec![(Type::Int, Type::Int)]),
+            Signature::build("take-string").input_output_types(vec![(Type::String, Type::String)]),
+        ] {
+            ws.add_decl(signature.predeclare());
+        }
+        let source = format!("1 | choose | {continuation}");
+        parse(&mut ws, None, source.as_bytes(), true);
+        assert!(ws.parse_errors.is_empty(), "{:?}", ws.parse_errors);
+    }
+    let engine = EngineState::new();
+    let mut ws = StateWorkingSet::new(&engine);
+    ws.add_decl(
+        Signature::build("choose")
+            .input_output_types(vec![(Type::Int, Type::String), (Type::Int, Type::Int)])
+            .predeclare(),
+    );
+    ws.add_decl(
+        Signature::build("take-bool")
+            .input_output_types(vec![(Type::Bool, Type::Bool)])
+            .predeclare(),
+    );
+    parse(&mut ws, None, b"1 | choose | take-bool", true);
+    assert!(ws.parse_errors.iter().any(|error| matches!(error,
+        ParseError::InputMismatchMultiple(types, _) if types.contains("int") && types.contains("string"))), "{:?}", ws.parse_errors);
+}
+
+#[test]
+fn short_flag_missing_value_points_at_flag() {
+    let engine = EngineState::new();
+    let mut ws = StateWorkingSet::new(&engine);
+    ws.add_decl(
+        Signature::build("foo")
+            .named("jazz", SyntaxShape::Int, "", Some('j'))
+            .predeclare(),
+    );
+    parse(&mut ws, None, b"foo -j", true);
+    let span = ws
+        .parse_errors
+        .iter()
+        .find_map(|error| match error {
+            ParseError::MissingFlagParam(_, span) => Some(*span),
+            _ => None,
+        })
+        .expect("missing-value error");
+    assert_eq!(ws.get_span_contents(span), b"-j");
+}
+
+#[test]
+fn malformed_expressions_have_relevant_spans() {
+    for source in [b"(1 + 2".as_slice(), b"[1 2", b"1 +"] {
+        let engine = EngineState::new();
+        let mut ws = StateWorkingSet::new(&engine);
+        parse(&mut ws, None, source, true);
+        assert!(!ws.parse_errors.is_empty());
+        for error in &ws.parse_errors {
+            let span = error.span();
+            assert!(span.start < span.end, "{source:?}: {error:?}");
+            assert!(!ws.get_span_contents(span).is_empty());
+        }
+    }
+}
+
+#[test]
+fn literal_types_widen_for_mixed_values() {
+    for (source, expected) in [
+        ("[1 'x' 2]", Type::List(Box::new(Type::Any))),
+        (
+            "[[a]; [1] ['x'] [2]]",
+            Type::Table(vec![("a".into(), Type::Any)].into()),
+        ),
+        (
+            "[[a b]; [1 true] [2 false]]",
+            Type::Table(vec![("a".into(), Type::Int), ("b".into(), Type::Bool)].into()),
+        ),
+    ] {
+        let engine = EngineState::new();
+        let mut ws = StateWorkingSet::new(&engine);
+        let block = parse(&mut ws, None, source.as_bytes(), true);
+        assert!(ws.parse_errors.is_empty(), "{:?}", ws.parse_errors);
+        assert_eq!(block.pipelines[0].elements[0].expr.ty, expected, "{source}");
+    }
+}

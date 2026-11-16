@@ -25,3 +25,5 @@ mod test_strings;
 mod test_table_operations;
 mod test_type_check;
 mod tests;
+
+mod test_language_correctness;
