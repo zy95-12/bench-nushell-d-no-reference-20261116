@@ -20,7 +20,7 @@ pub fn parse_type(working_set: &mut StateWorkingSet, bytes: &[u8], span: Span) -
 }
 
 /// Parse the literals of [`Type`]-like [`SyntaxShape`]s including inner types.
-/// Also handles the specification of custom completions with `type@completer`.
+/// Completion suffixes are parsed separately by [`parse_argument_shape`].
 ///
 /// Restrict the parsing with `use_loc`
 /// Used in:
@@ -37,6 +37,20 @@ pub fn parse_shape_name(
     span: Span,
     use_loc: ShapeDescriptorUse,
 ) -> SyntaxShape {
+    if let Some(at) = completion_separator(bytes) {
+        let shape = parse_shape_name(
+            working_set,
+            &bytes[..at],
+            Span::new(span.start, span.start + at),
+            use_loc,
+        );
+        working_set.error(ParseError::LabeledError(
+            "Unexpected custom completer in type spec".into(),
+            "Type specifications do not support custom completers".into(),
+            Span::new(span.start + at, span.end),
+        ));
+        return shape;
+    }
     match bytes {
         b"any" => SyntaxShape::Any,
         b"binary" => SyntaxShape::Binary,
@@ -73,49 +87,8 @@ pub fn parse_shape_name(
             parse_generic_shape(working_set, bytes, span, use_loc)
         }
         _ => {
-            if bytes.contains(&b'@') {
-                let mut split = bytes.splitn(2, |b| b == &b'@');
-
-                let shape_name = split
-                    .next()
-                    .expect("If `bytes` contains `@` splitn returns 2 slices");
-                let shape_span = Span::new(span.start, span.start + shape_name.len());
-                let shape = parse_shape_name(working_set, shape_name, shape_span, use_loc);
-                if use_loc != ShapeDescriptorUse::Argument {
-                    let illegal_span = Span::new(span.start + shape_name.len(), span.end);
-                    working_set.error(ParseError::LabeledError(
-                        "Unexpected custom completer in type spec".into(),
-                        "Type specifications do not support custom completers".into(),
-                        illegal_span,
-                    ));
-                    return shape;
-                }
-
-                let cmd_span = Span::new(span.start + shape_name.len() + 1, span.end);
-                let cmd_name = split
-                    .next()
-                    .expect("If `bytes` contains `@` splitn returns 2 slices");
-
-                let cmd_name = trim_quotes(cmd_name);
-                if cmd_name.is_empty() {
-                    working_set.error(ParseError::Expected(
-                        "the command name of a completion function",
-                        cmd_span,
-                    ));
-                    return shape;
-                }
-
-                if let Some(decl_id) = working_set.find_decl(cmd_name) {
-                    SyntaxShape::CompleterWrapper(Box::new(shape), decl_id)
-                } else {
-                    working_set.error(ParseError::UnknownCommand(cmd_span));
-                    shape
-                }
-            } else {
-                //TODO: Handle error case for unknown shapes
-                working_set.error(ParseError::UnknownType(span));
-                SyntaxShape::Any
-            }
+            working_set.error(ParseError::UnknownType(span));
+            SyntaxShape::Any
         }
     }
 }
@@ -318,4 +291,72 @@ fn parse_type_params(
     }
 
     sig
+}
+
+/// Parse completion metadata separately from the syntactic type.
+pub fn parse_argument_shape(
+    working_set: &mut StateWorkingSet,
+    bytes: &[u8],
+    span: Span,
+) -> (SyntaxShape, Option<nu_protocol::Completion>) {
+    let Some(at) = completion_separator(bytes) else {
+        return (
+            parse_shape_name(working_set, bytes, span, ShapeDescriptorUse::Argument),
+            None,
+        );
+    };
+    let shape = parse_shape_name(
+        working_set,
+        &bytes[..at],
+        Span::new(span.start, span.start + at),
+        ShapeDescriptorUse::Argument,
+    );
+    let completion_span = Span::new(span.start + at + 1, span.end);
+    let completion = if bytes[at + 1..].starts_with(b"[") {
+        let expr = parse_value(
+            working_set,
+            completion_span,
+            &SyntaxShape::List(Box::new(SyntaxShape::Any)),
+        );
+        match nu_protocol::eval_const::eval_constant(working_set, &expr) {
+            Ok(nu_protocol::Value::List { vals, .. }) => {
+                Some(nu_protocol::Completion::Static(vals))
+            }
+            _ => {
+                working_set.error(ParseError::Expected(
+                    "a constant completion list",
+                    completion_span,
+                ));
+                None
+            }
+        }
+    } else if let Some(id) = working_set.find_decl(trim_quotes(&bytes[at + 1..])) {
+        Some(nu_protocol::Completion::Custom(id))
+    } else {
+        working_set.error(ParseError::UnknownCommand(completion_span));
+        None
+    };
+    (shape, completion)
+}
+
+// A completer belongs to the entire argument, rather than an inner generic type.
+fn completion_separator(bytes: &[u8]) -> Option<usize> {
+    let mut depth: usize = 0;
+    let mut quote = None;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if let Some(delimiter) = quote {
+            if byte == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'"' | b'\'' | b'`' => quote = Some(byte),
+            b'<' => depth += 1,
+            b'>' => depth = depth.saturating_sub(1),
+            b'@' if depth == 0 => return Some(index),
+            _ => {}
+        }
+    }
+    None
 }

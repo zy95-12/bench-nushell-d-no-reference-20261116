@@ -26,11 +26,19 @@ pub fn evaluate_file(
 ) -> Result<(), ShellError> {
     let cwd = engine_state.cwd_as_string(Some(stack))?;
 
+    let path_span = {
+        let mut working_set = StateWorkingSet::new(engine_state);
+        let _file_id = working_set.add_file("command-line".into(), path.as_bytes());
+        let span = working_set
+            .get_span_for_filename("command-line")
+            .expect("added command-line file");
+        engine_state.merge_delta(working_set.render())?;
+        span
+    };
     let file_path = canonicalize_with(&path, cwd).map_err(|err| {
-        IoError::new_internal_with_path(
+        IoError::new(
             err.not_found_as(NotFound::File),
-            "Could not access file",
-            nu_protocol::location!(),
+            path_span,
             PathBuf::from(&path),
         )
     })?;

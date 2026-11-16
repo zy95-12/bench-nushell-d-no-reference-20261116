@@ -23,13 +23,20 @@ impl LanguageServer {
         // fallback to default completer where
         // the text is truncated to `location` and
         // an extra placeholder token is inserted for correct parsing
+        let is_boundary = |c: char| c.is_whitespace() || "|(){}[]<>,:;".contains(c);
         let need_fallback = location == 0
             || file_text
                 .get(location - 1..location)
                 .and_then(|s| s.chars().next())
-                .is_some_and(|c| c.is_whitespace() || "|(){}[]<>,:;".contains(c));
+                .is_some_and(is_boundary);
 
-        self.need_parse |= need_fallback;
+        // Variable candidates need the live lexical environment at the cursor,
+        // which is not retained in a cached parsed block.
+        let variable_completion = file_text[..location]
+            .rsplit(is_boundary)
+            .next()
+            .is_some_and(|word| word.starts_with('$'));
+        self.need_parse |= need_fallback || variable_completion;
         let engine_state = Arc::new(self.new_engine_state(Some(&path_uri)));
         let completer = NuCompleter::new(engine_state.clone(), Arc::new(Stack::new()));
         let results = if need_fallback {
@@ -235,22 +242,93 @@ mod tests {
             .unwrap()
     }
 
+    fn assert_completion_items(actual: serde_json::Value, expected: serde_json::Value) {
+        let actual = actual.as_array().expect("completion items");
+        let mut previous = None;
+        for item in expected.as_array().expect("expected completion items") {
+            let (index, found) = actual
+                .iter()
+                .enumerate()
+                .find(|(_, candidate)| candidate["label"] == item["label"])
+                .unwrap_or_else(|| panic!("missing completion {} in {actual:?}", item["label"]));
+            assert!(
+                previous.is_none_or(|previous| index > previous),
+                "completion ordering changed: {actual:?}"
+            );
+            previous = Some(index);
+            assert_json_include!(actual: found, expected: item);
+        }
+    }
+
+    fn open_completion_fixture(client: &Connection, name: &str) -> Uri {
+        let script = path_to_uri(&fixtures().join("lsp").join("completion").join(name));
+        open_unchecked(client, script.clone());
+        script
+    }
+
+    #[test]
+    fn complete_variables_from_live_lexical_scope_after_diagnostics() {
+        for (text, expected, forbidden) in [
+            ("def f [author: string] { $aut", "$author", "$hidden"),
+            ("def f [author: string] { ($aut", "$author", "$hidden"),
+            ("def f [author: string] { [$aut", "$author", "$hidden"),
+            ("for author in [] { $aut", "$author", "$hidden"),
+            ("match 1 { $author => { $aut", "$author", "$hidden"),
+            (
+                "do { let hidden = 1 }; do { let author = 1; $",
+                "$author",
+                "$hidden",
+            ),
+        ] {
+            let (client, _recv) = initialize_language_server(None, None);
+            let dir = tempfile::tempdir().unwrap();
+            let uri = path_to_uri(dir.path().join("scope.nu"));
+            crate::tests::open_with_text(&client, uri.clone(), text.into()).unwrap();
+            for _ in 0..2 {
+                let resp = send_complete_request(&client, uri.clone(), 0, text.len() as u32);
+                let result = result_from_message(resp);
+                let labels = result
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|item| item["label"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                assert!(labels.contains(&expected), "{text}: {result}");
+                assert!(!labels.contains(&forbidden), "{text}: {result}");
+            }
+        }
+    }
+
+    #[test]
+    fn complete_negative_positional_values() {
+        for shape in ["int@nums", "int@[-12 -15]"] {
+            let (client, _recv) = initialize_language_server(None, None);
+            let dir = tempfile::tempdir().unwrap();
+            let uri = path_to_uri(dir.path().join("negative.nu"));
+            let text = format!("def nums [] {{ [-12 -15] }}; def f [n: {shape}] {{}}; f -1");
+            crate::tests::open_with_text(&client, uri.clone(), text.clone()).unwrap();
+            for _ in 0..2 {
+                let resp = send_complete_request(&client, uri.clone(), 0, text.len() as u32);
+                assert_completion_items(
+                    result_from_message(resp),
+                    serde_json::json!([
+                        { "label": "-12" }, { "label": "-15" }
+                    ]),
+                );
+            }
+        }
+    }
+
     #[test]
     fn complete_on_variable() {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("var.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "var.nu");
         let resp = send_complete_request(&client_connection, script, 2, 9);
 
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "$greeting",
                     "labelDetails": { "description": "variable" },
@@ -260,7 +338,7 @@ mod tests {
                     },
                     "kind": 6
                 }
-            ])
+            ]),
         );
     }
 
@@ -268,22 +346,16 @@ mod tests {
     fn complete_command() {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("command.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "command.nu");
         let resp = send_complete_request(&client_connection, script.clone(), 0, 6);
 
         #[cfg(not(windows))]
         let detail_str = "detail";
         #[cfg(windows)]
         let detail_str = "detail\r";
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 // defined after the cursor
                 { "label": "config n foo bar", "detail": detail_str, "kind": 2 },
                 {
@@ -293,7 +365,7 @@ mod tests {
                         "newText": "config nu "
                     },
                 },
-            ])
+            ]),
         );
 
         // short flag
@@ -340,12 +412,12 @@ mod tests {
         // fallback completion on a newly defined command,
         // the decl_id is missing in the engine state, this shouldn't cause any panic.
         let resp = send_complete_request(&client_connection, script.clone(), 13, 9);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 // defined before the cursor
                 { "label": "config n foo bar", "detail": detail_str, "kind": 2 },
-            ])
+            ]),
         );
 
         // inside parenthesis
@@ -367,18 +439,13 @@ mod tests {
     fn fallback_completion() {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("fallback.nu");
-        let script = path_to_uri(&script);
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "fallback.nu");
 
         // at the very beginning of a file
         let resp = send_complete_request(&client_connection, script.clone(), 0, 0);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "alias",
                     "labelDetails": { "description": "keyword" },
@@ -390,13 +457,13 @@ mod tests {
                     "insertTextFormat": 2,
                     "kind": 14
                 }
-            ])
+            ]),
         );
         // after a white space character
         let resp = send_complete_request(&client_connection, script.clone(), 3, 2);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "alias",
                     "labelDetails": { "description": "keyword" },
@@ -408,7 +475,7 @@ mod tests {
                     "insertTextFormat": 2,
                     "kind": 14
                 }
-            ])
+            ]),
         );
         // fallback file path completion
         let resp = send_complete_request(&client_connection, script, 5, 4);
@@ -428,18 +495,12 @@ mod tests {
     fn complete_command_with_line() {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("utf_pipeline.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "utf_pipeline.nu");
         let resp = send_complete_request(&client_connection, script, 0, 13);
 
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "str trim",
                     "labelDetails": { "description": "built-in" },
@@ -451,7 +512,7 @@ mod tests {
                     "insertTextFormat": 2,
                     "kind": 3
                 }
-            ])
+            ]),
         );
     }
 
@@ -459,18 +520,12 @@ mod tests {
     fn complete_keyword() {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("keyword.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "keyword.nu");
         let resp = send_complete_request(&client_connection, script, 0, 2);
 
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "overlay",
                     "labelDetails": { "description": "keyword" },
@@ -480,7 +535,7 @@ mod tests {
                     },
                     "kind": 14
                 },
-            ])
+            ]),
         );
     }
 
@@ -488,17 +543,11 @@ mod tests {
     fn complete_cell_path() {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("cell_path.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "cell_path.nu");
         let resp = send_complete_request(&client_connection, script.clone(), 1, 5);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "\"1\"",
                     "detail": "string",
@@ -508,13 +557,13 @@ mod tests {
                     },
                     "kind": 10
                 },
-            ])
+            ]),
         );
 
         let resp = send_complete_request(&client_connection, script, 1, 10);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "baz",
                     "detail": "int",
@@ -524,7 +573,7 @@ mod tests {
                     },
                     "kind": 10
                 },
-            ])
+            ]),
         );
     }
 
@@ -533,17 +582,11 @@ mod tests {
         let config = "$env.config.completions.external.completer = {|spans| ['--background']}";
         let (client_connection, _recv) = initialize_language_server(Some(config), None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("external.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "external.nu");
         let resp = send_complete_request(&client_connection, script.clone(), 0, 11);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "--background",
                     "labelDetails": { "description": "string" },
@@ -552,14 +595,14 @@ mod tests {
                         "range": { "start": { "line": 0, "character": 5 }, "end": { "line": 0, "character": 11 } }
                     },
                 },
-            ])
+            ]),
         );
 
         // fallback completer, special argument treatment for `sudo`/`doas`
         let resp = send_complete_request(&client_connection, script, 0, 5);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "alias",
                     "labelDetails": { "description": "keyword" },
@@ -570,7 +613,7 @@ mod tests {
                     },
                     "kind": 14
                 },
-            ])
+            ]),
         );
     }
 
@@ -578,18 +621,12 @@ mod tests {
     fn complete_operators() {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("fallback.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "fallback.nu");
         // fallback completer
         let resp = send_complete_request(&client_connection, script.clone(), 7, 10);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "!=",
                     "labelDetails": { "description": "operator" },
@@ -599,13 +636,13 @@ mod tests {
                     },
                     "kind": 24 // operator kind
                 }
-            ])
+            ]),
         );
 
         let resp = send_complete_request(&client_connection, script, 7, 15);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "not-has",
                     "labelDetails": { "description": "operator" },
@@ -615,7 +652,7 @@ mod tests {
                     },
                     "kind": 24 // operator kind
                 }
-            ])
+            ]),
         );
     }
 
@@ -623,17 +660,11 @@ mod tests {
     fn complete_use_arguments() {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("completion");
-        script.push("use.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
+        let script = open_completion_fixture(&client_connection, "use.nu");
         let resp = send_complete_request(&client_connection, script.clone(), 4, 17);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "std-rfc",
                     "labelDetails": { "description": "module" },
@@ -643,13 +674,13 @@ mod tests {
                     },
                     "kind": 9 // module kind
                 }
-            ])
+            ]),
         );
 
         let resp = send_complete_request(&client_connection, script.clone(), 5, 22);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "clip",
                     "labelDetails": { "description": "module" },
@@ -659,13 +690,13 @@ mod tests {
                     },
                     "kind": 9 // module kind
                 }
-            ])
+            ]),
         );
 
         let resp = send_complete_request(&client_connection, script.clone(), 5, 35);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "paste",
                     "labelDetails": { "description": "custom" },
@@ -675,13 +706,13 @@ mod tests {
                     },
                     "kind": 2
                 }
-            ])
+            ]),
         );
 
         let resp = send_complete_request(&client_connection, script.clone(), 6, 14);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "null_device",
                     "labelDetails": { "description": "variable" },
@@ -691,13 +722,13 @@ mod tests {
                     },
                     "kind": 6 // variable kind
                 }
-            ])
+            ]),
         );
 
         let resp = send_complete_request(&client_connection, script, 7, 13);
-        assert_json_include!(
-            actual: result_from_message(resp),
-            expected: serde_json::json!([
+        assert_completion_items(
+            result_from_message(resp),
+            serde_json::json!([
                 {
                     "label": "foo",
                     "labelDetails": { "description": "variable" },
@@ -707,7 +738,7 @@ mod tests {
                     },
                     "kind": 6 // variable kind
                 }
-            ])
+            ]),
         );
     }
 }

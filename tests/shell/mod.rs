@@ -445,3 +445,69 @@ fn main_script_subcommand_help_uses_script_name2() {
         assert!(!actual.err.contains("Usage: main foo"));
     })
 }
+
+#[test]
+fn missing_script_diagnostic_points_at_command_line() {
+    use assert_cmd::prelude::*;
+    let result = std::process::Command::cargo_bin("nu")
+        .unwrap()
+        .args(["--no-config-file", "authoring-missing-script.nu"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let err = String::from_utf8_lossy(&result.stderr);
+    assert!(err.contains("command-line"), "{err}");
+    assert!(err.contains("authoring-missing-script.nu"), "{err}");
+    assert!(!err.contains("eval_file.rs"), "{err}");
+}
+
+#[test]
+fn lsp_config_prints_use_stderr_and_report_lsp_mode() {
+    use assert_cmd::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.nu");
+    std::fs::write(
+        &config,
+        r#"print $"LSP-MODE=($nu.is-lsp)"
+print --raw 'LSP-RAW'
+'LSP-PIPE' | print
+"#,
+    )
+    .unwrap();
+    let env = dir.path().join("env.nu");
+    std::fs::write(&env, "").unwrap();
+    let mut child = Command::cargo_bin("nu")
+        .unwrap()
+        .arg("--lsp")
+        .arg("--config")
+        .arg(config)
+        .arg("--env-config")
+        .arg(env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let messages = [
+        serde_json::json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"capabilities":{}}}),
+        serde_json::json!({"jsonrpc":"2.0", "method":"initialized", "params":{}}),
+        serde_json::json!({"jsonrpc":"2.0", "id":2, "method":"shutdown", "params":null}),
+        serde_json::json!({"jsonrpc":"2.0", "method":"exit", "params":null}),
+    ];
+    let mut stdin = child.stdin.take().unwrap();
+    for message in messages {
+        let body = message.to_string();
+        write!(stdin, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+    }
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    let out = String::from_utf8_lossy(&output.stdout);
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("LSP-MODE=true"), "{err}");
+    assert!(err.contains("LSP-RAW") && err.contains("LSP-PIPE"), "{err}");
+    assert!(!out.contains("LSP-"), "{out}");
+    assert!(out.starts_with("Content-Length:"), "{out}, stderr: {err}");
+    assert!(output.status.success(), "{err}");
+}

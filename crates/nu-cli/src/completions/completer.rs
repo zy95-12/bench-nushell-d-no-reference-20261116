@@ -1,7 +1,8 @@
 use crate::completions::{
     AttributableCompletion, AttributeCompletion, CellPathCompletion, CommandCompletion, Completer,
     CompletionOptions, CustomCompletion, DirectoryCompletion, DotNuCompletion,
-    ExportableCompletion, FileCompletion, FlagCompletion, OperatorCompletion, VariableCompletion,
+    ExportableCompletion, FileCompletion, FlagCompletion, OperatorCompletion, StaticCompletion,
+    VariableCompletion,
     base::{SemanticSuggestion, SuggestionKind},
 };
 use nu_color_config::{color_record_to_nustyle, lookup_ansi_color_style};
@@ -170,16 +171,28 @@ impl NuCompleter {
     pub fn fetch_completions_at(&self, line: &str, pos: usize) -> Vec<SemanticSuggestion> {
         let mut working_set = StateWorkingSet::new(&self.engine_state);
         let offset = working_set.next_span_start();
+        working_set.completion_cursor = Some(offset + pos);
         // TODO: Callers should be trimming the line themselves
         let line = if line.len() > pos { &line[..pos] } else { line };
+        // A letter placeholder would turn a negative number into a flag token
+        // (e.g. -1a). Parse numeric suffixes unchanged so the parser can decide
+        // whether they are positional values or actual flags.
+        let extra_placeholder = !line
+            .rsplit(char::is_whitespace)
+            .next()
+            .is_some_and(|token| token.starts_with('-') && token.parse::<f64>().is_ok());
+        let contents = if extra_placeholder {
+            format!("{line}a")
+        } else {
+            line.to_string()
+        };
         let block = parse(
             &mut working_set,
             Some("completer"),
-            // Add a placeholder `a` to the end
-            format!("{line}a").as_bytes(),
+            contents.as_bytes(),
             false,
         );
-        self.fetch_completions_by_block(block, &working_set, pos, offset, line, true)
+        self.fetch_completions_by_block(block, &working_set, pos, offset, line, extra_placeholder)
     }
 
     /// For completion in LSP server.
@@ -195,6 +208,7 @@ impl NuCompleter {
         contents: &str,
     ) -> Vec<SemanticSuggestion> {
         let mut working_set = StateWorkingSet::new(&self.engine_state);
+        working_set.completion_cursor = Some(working_set.next_span_start() + pos);
         let block = parse(&mut working_set, Some(filename), contents.as_bytes(), false);
         let Some(file_span) = working_set.get_span_for_filename(filename) else {
             return vec![];
@@ -349,7 +363,33 @@ impl NuCompleter {
                     let span = arg.span();
                     if span.contains(pos) {
                         // if customized completion specified, it has highest priority
-                        if let Some(decl_id) = arg.expr().and_then(|e| e.custom_completion) {
+                        let signature = working_set.get_decl(call.decl_id).signature();
+                        let completion = match arg {
+                            Argument::Named((name, _, Some(value))) if value.span.contains(pos) => {
+                                signature
+                                    .named
+                                    .iter()
+                                    .find(|flag| flag.long == name.item)
+                                    .and_then(|flag| flag.completion.as_ref())
+                            }
+                            // Named/unknown arguments above are flag tokens. A
+                            // positional can legitimately start with '-', e.g.
+                            // a negative number; only a lone dash requests flags.
+                            Argument::Positional(_)
+                                if strip_placeholder_if_any(working_set, &span, strip).1
+                                    != b"-" =>
+                            {
+                                let index = call.arguments[..arg_idx]
+                                    .iter()
+                                    .filter(|arg| matches!(arg, Argument::Positional(_)))
+                                    .count();
+                                signature
+                                    .get_positional(index)
+                                    .and_then(|arg| arg.completion.as_ref())
+                            }
+                            _ => None,
+                        };
+                        if let Some(completion) = completion {
                             // for `--foo <tab>` and `--foo=<tab>`, the arg span should be trimmed
                             let (new_span, prefix) = if matches!(arg, Argument::Named(_)) {
                                 strip_placeholder_with_rsplit(
@@ -363,15 +403,29 @@ impl NuCompleter {
                             };
                             let ctx = Context::new(working_set, new_span, prefix, offset);
 
-                            let mut completer = CustomCompletion::new(
-                                decl_id,
-                                prefix_str.into(),
-                                pos - offset,
-                                FileCompletion,
-                            );
-
-                            // Prioritize argument completions over (sub)commands
-                            suggestions.splice(0..0, self.process_completion(&mut completer, &ctx));
+                            match completion {
+                                nu_protocol::Completion::Custom(decl_id) => {
+                                    let mut completer = CustomCompletion::new(
+                                        *decl_id,
+                                        prefix_str.into(),
+                                        pos - offset,
+                                        FileCompletion,
+                                    );
+                                    suggestions.splice(
+                                        0..0,
+                                        self.process_completion(&mut completer, &ctx),
+                                    );
+                                }
+                                nu_protocol::Completion::Static(values) => {
+                                    suggestions.splice(
+                                        0..0,
+                                        self.process_completion(
+                                            &mut StaticCompletion(values),
+                                            &ctx,
+                                        ),
+                                    );
+                                }
+                            }
                             break;
                         }
 

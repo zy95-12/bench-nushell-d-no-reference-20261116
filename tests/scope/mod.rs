@@ -330,3 +330,13 @@ fn correct_scope_variables_fields() {
     let actual = nu!(&inp.join("; "));
     assert_eq!(actual.out, "false");
 }
+
+#[test]
+fn scope_reports_static_signature_completions() {
+    let actual = nu!(
+        r#"def author [value: string@[cat dog] --animal: string@[cat dog]] {}
+        scope commands | where name == author | get signatures.0.any | where parameter_name in [value animal] | get custom_completion | each { str join ',' } | str join ';'
+    "#
+    );
+    assert_eq!(actual.out, "cat,dog;cat,dog");
+}

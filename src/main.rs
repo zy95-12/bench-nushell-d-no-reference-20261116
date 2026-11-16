@@ -210,6 +210,7 @@ fn main() -> Result<()> {
             && parsed_nu_cli_args.commands.is_none()
             && script_name.is_empty());
 
+    engine_state.is_lsp = parsed_nu_cli_args.lsp;
     engine_state.is_login = parsed_nu_cli_args.login_shell.is_some();
 
     engine_state.history_enabled = parsed_nu_cli_args.no_history.is_none();

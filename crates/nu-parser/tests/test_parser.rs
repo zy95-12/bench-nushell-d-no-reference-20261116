@@ -3163,3 +3163,27 @@ fn literal_types_widen_for_mixed_values() {
         assert_eq!(block.pipelines[0].elements[0].expr.ty, expected, "{source}");
     }
 }
+
+#[test]
+fn custom_completers_are_rejected_in_type_specs() {
+    for annotation in [
+        "string@animals",
+        "list<string@animals>",
+        "list<string>@animals",
+        "string@[cat dog]",
+    ] {
+        let engine = EngineState::new();
+        let mut working_set = StateWorkingSet::new(&engine);
+        working_set.add_decl(Box::new(Let));
+        let script = format!("let value: {annotation} = null");
+        parse(&mut working_set, None, script.as_bytes(), false);
+        assert!(
+            working_set
+                .parse_errors
+                .iter()
+                .any(|err| err.to_string().contains("Unexpected custom completer")),
+            "{annotation}: {:?}",
+            working_set.parse_errors
+        );
+    }
+}

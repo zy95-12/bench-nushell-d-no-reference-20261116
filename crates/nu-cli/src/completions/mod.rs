@@ -20,7 +20,7 @@ pub use cell_path_completions::CellPathCompletion;
 pub use command_completions::CommandCompletion;
 pub use completer::NuCompleter;
 pub use completion_options::{CompletionOptions, MatchAlgorithm};
-pub use custom_completions::CustomCompletion;
+pub use custom_completions::{CustomCompletion, StaticCompletion};
 pub use directory_completions::DirectoryCompletion;
 pub use dotnu_completions::DotNuCompletion;
 pub use exportable_completions::ExportableCompletion;

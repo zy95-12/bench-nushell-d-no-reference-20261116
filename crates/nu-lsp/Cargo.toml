@@ -33,6 +33,7 @@ nu-std = { path = "../nu-std", version = "0.106.0" }
 nu-test-support = { path = "../nu-test-support", version = "0.106.0" }
 
 assert-json-diff = "2.0"
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

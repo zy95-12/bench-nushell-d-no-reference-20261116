@@ -166,3 +166,25 @@ impl<T: Completer> Completer for CustomCompletion<T> {
         }
     }
 }
+
+/// Signature-provided candidates use the same matching and value representation
+/// as candidates returned by a custom completion command.
+pub struct StaticCompletion<'a>(pub &'a [Value]);
+
+impl Completer for StaticCompletion<'_> {
+    fn fetch(
+        &mut self,
+        _working_set: &StateWorkingSet,
+        _stack: &Stack,
+        prefix: impl AsRef<str>,
+        span: Span,
+        offset: usize,
+        options: &CompletionOptions,
+    ) -> Vec<SemanticSuggestion> {
+        let mut matcher = NuMatcher::new(prefix, options);
+        for suggestion in map_value_completions(self.0.iter(), span, offset) {
+            matcher.add_semantic_suggestion(suggestion);
+        }
+        matcher.results()
+    }
+}

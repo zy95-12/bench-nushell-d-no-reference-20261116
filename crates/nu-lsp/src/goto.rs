@@ -15,7 +15,9 @@ impl LanguageServer {
         for cached_file in files.into_iter() {
             if cached_file.covered_span.contains(span.start) {
                 let path = Path::new(&*cached_file.name);
-                if !path.is_file() {
+                // Synthetic parser sources have no document URI. An absolute path
+                // may still name a newly opened, unsaved document.
+                if !path.is_absolute() {
                     return None;
                 }
                 let target_uri = path_to_uri(path);
@@ -150,6 +152,25 @@ mod tests {
         let resp = send_goto_definition_request(&client_connection, script, 0, 0);
 
         assert_json_eq!(result_from_message(resp), serde_json::json!(null));
+    }
+
+    #[test]
+    fn goto_definition_in_unsaved_document() {
+        let (client, _recv) = initialize_language_server(None, None);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("unsaved.nu");
+        assert!(!path.exists());
+        let uri = path_to_uri(&path);
+        crate::tests::open_with_text(&client, uri.clone(), "let greeting = 1\n$greeting".into())
+            .unwrap();
+        let resp = send_goto_definition_request(&client, uri.clone(), 1, 4);
+        assert_json_eq!(
+            result_from_message(resp),
+            serde_json::json!({
+                "uri": uri,
+                "range": { "start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 12} }
+            })
+        );
     }
 
     #[test]

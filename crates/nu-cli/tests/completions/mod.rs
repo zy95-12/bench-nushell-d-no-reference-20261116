@@ -312,6 +312,7 @@ fn custom_arguments_and_subcommands() {
         folder("test_a"),
         file("test_a_symlink"),
         folder("test_b"),
+        "foo test".into(),
         "foo test bar".into(),
     ];
     match_suggestions_by_string(&expected, &suggestions);
@@ -330,7 +331,7 @@ fn custom_flags_and_subcommands() {
     let completion_str = "foo --test";
     let suggestions = completer.complete(completion_str, completion_str.len());
     // including both flag and directory completions
-    let expected: Vec<_> = vec!["--test", "foo --test bar"];
+    let expected: Vec<_> = vec!["--test", "foo --test", "foo --test bar"];
     match_suggestions(&expected, &suggestions);
 }
 
@@ -347,7 +348,7 @@ fn custom_arguments_vs_subcommands() {
     let completion_str = "foo test";
     let suggestions = completer.complete(completion_str, completion_str.len());
     // including only subcommand completions
-    let expected: Vec<_> = vec!["foo test bar"];
+    let expected: Vec<_> = vec!["foo test", "foo test bar"];
     match_suggestions(&expected, &suggestions);
 }
 
@@ -1897,9 +1898,11 @@ fn variables_completions() {
         "home-path",
         "is-interactive",
         "is-login",
+        "is-lsp",
         "loginshell-path",
         "os-info",
         "pid",
+        #[cfg(feature = "plugin")]
         "plugin-path",
         "startup-time",
         "temp-path",
@@ -2483,7 +2486,7 @@ fn operator_completions(mut custom_completer: NuCompleter) {
     // == != > < >= <= in not-in
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
-    assert_eq!(17, suggestions.len());
+    assert_eq!(19, suggestions.len());
     let suggestions = custom_completer.complete("'str' +", 7);
     let expected: Vec<_> = vec!["++"];
     match_suggestions(&expected, &suggestions);
@@ -2548,7 +2551,7 @@ fn cell_path_operator_completions(mut custom_completer: NuCompleter) {
     // == != > < >= <= in not-in
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
-    assert_eq!(17, suggestions.len());
+    assert_eq!(19, suggestions.len());
     let suggestions = custom_completer.complete("const f = {'foo': [1, '1']}; $f.foo.1 ++", 40);
     let expected: Vec<_> = vec!["++"];
     match_suggestions(&expected, &suggestions);
@@ -2561,7 +2564,7 @@ fn assignment_operator_completions(mut custom_completer: NuCompleter) {
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
     // = ++=
-    assert_eq!(19, suggestions.len());
+    assert_eq!(21, suggestions.len());
     let suggestions = custom_completer.complete("mut foo = ''; $foo ++", 21);
     let expected: Vec<_> = vec!["++", "++="];
     match_suggestions(&expected, &suggestions);
@@ -2608,7 +2611,7 @@ fn assignment_operator_completions(mut custom_completer: NuCompleter) {
 
     // all operators for type any
     let suggestions = custom_completer.complete("ls | where name ", 16);
-    assert_eq!(30, suggestions.len());
+    assert_eq!(32, suggestions.len());
     let expected: Vec<_> = vec!["starts-with"];
     let suggestions = custom_completer.complete("ls | where name starts", 22);
     match_suggestions(&expected, &suggestions);
@@ -2627,7 +2630,7 @@ fn cellpath_assignment_operator_completions() {
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
     // = ++=
-    assert_eq!(19, suggestions.len());
+    assert_eq!(21, suggestions.len());
     let completion_str = "$foo.foo.1 ++";
     let suggestions = completer.complete(completion_str, completion_str.len());
     let expected: Vec<_> = vec!["++", "++="];
@@ -2657,7 +2660,7 @@ fn type_inferenced_operator_completions(mut custom_completer: NuCompleter) {
     // == != > < >= <= in not-in
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
-    assert_eq!(17, suggestions.len());
+    assert_eq!(19, suggestions.len());
     let suggestions = custom_completer.complete("const f = {'foo': [1, '1']}; $f.foo.1 ++", 38);
     let expected: Vec<_> = vec!["++"];
     match_suggestions(&expected, &suggestions);
@@ -2669,4 +2672,149 @@ fn type_inferenced_operator_completions(mut custom_completer: NuCompleter) {
     let suggestions = custom_completer.complete("mut foo = [(date now)]; $foo.0 =", 32);
     let expected: Vec<_> = vec!["=", "=="];
     match_suggestions(&expected, &suggestions);
+}
+
+#[test]
+fn unfinished_blocks_complete_only_visible_variables() {
+    let cases = [
+        ("def f [author: string] { $aut", "$author"),
+        ("for author in [] { $aut", "$author"),
+        ("while false { let author = 1; $aut", "$author"),
+        ("loop { let author = 1; $aut", "$author"),
+        ("[] | each {|author| $aut", "$author"),
+        ("match 1 { $author => { $aut", "$author"),
+        ("do { let author = 1; $aut", "$author"),
+        ("def f [] { let hidden = 1 }; $nu", "$nu"),
+    ];
+    for (line, expected) in cases {
+        let (_, _, engine, stack) = new_engine();
+        let mut completer = NuCompleter::new(Arc::new(engine), Arc::new(stack));
+        let values = completer
+            .complete(line, line.len())
+            .into_iter()
+            .map(|s| s.value)
+            .collect::<Vec<_>>();
+        assert!(values.contains(&expected.to_string()), "{line}: {values:?}");
+    }
+    for line in [
+        "do { let hidden = 1 }; $hid",
+        "def f [hidden: string] { }; $hid",
+        "for hidden in [] {}; $hid",
+        "match 1 { $hidden => 1, _ => { $hid",
+        "do { let hidden = 1 }; do { $hid",
+    ] {
+        let (_, _, engine, stack) = new_engine();
+        let mut completer = NuCompleter::new(Arc::new(engine), Arc::new(stack));
+        assert!(
+            !completer
+                .complete(line, line.len())
+                .iter()
+                .any(|s| s.value == "$hidden"),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn signature_completion_values_and_flag_priority() {
+    for declaration in ["def author", "extern author"] {
+        for (suffix, expected, forbidden) in [
+            ("-", "--verbose", "cat"),
+            ("--ver", "--verbose", "cat"),
+            ("--unknown", "", "cat"),
+            ("c", "cat", "--verbose"),
+            ("--animal c", "cat", "--verbose"),
+        ] {
+            let (_, _, engine, stack) = new_engine();
+            let mut completer = NuCompleter::new(Arc::new(engine), Arc::new(stack));
+            let body = if declaration.starts_with("def") {
+                " {}"
+            } else {
+                ""
+            };
+            let line = format!(
+                "def animals [] {{ [cat dog] }}; {declaration} [value?: string@animals --animal: string@animals --verbose(-v)]{body}; author {suffix}"
+            );
+            let values = completer
+                .complete(&line, line.len())
+                .into_iter()
+                .map(|s| s.value)
+                .collect::<Vec<_>>();
+            if !expected.is_empty() {
+                assert!(values.contains(&expected.to_string()), "{line}: {values:?}");
+            }
+            assert!(
+                !values.contains(&forbidden.to_string()),
+                "{line}: {values:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn static_signature_completions() {
+    for (signature, suffix) in [
+        ("value: string@[cat dog]", "c"),
+        ("value: string@[cat dog]", "C"),
+        ("--animal: string@[cat dog]", "--animal c"),
+        ("...values: string@[cat dog]", "dog c"),
+    ] {
+        let (_, _, engine, stack) = new_engine();
+        let mut completer = NuCompleter::new(Arc::new(engine), Arc::new(stack));
+        let line = format!("def author [{signature}] {{}}; author {suffix}");
+        let values = completer
+            .complete(&line, line.len())
+            .into_iter()
+            .map(|s| s.value)
+            .collect::<Vec<_>>();
+        assert!(values.contains(&"cat".into()), "{line}: {values:?}");
+        assert!(!values.contains(&"dog".into()), "{line}: {values:?}");
+    }
+}
+
+#[test]
+fn negative_positional_signature_completions_preserve_flag_priority() {
+    for (shape, candidates) in [
+        ("int@nums", vec!["-12", "-15"]),
+        ("int@[-12 -15]", vec!["-12", "-15"]),
+        ("float@[-1.2 -1.5]", vec!["-1.2", "-1.5"]),
+    ] {
+        let (_, _, engine, stack) = new_engine();
+        let completer = NuCompleter::new(Arc::new(engine), Arc::new(stack));
+        let filename = std::env::current_dir()
+            .unwrap()
+            .join("negative-completion.nu");
+        for prefix in ["-1", "-", "--ver", "--unknown", "-v"] {
+            let line = format!(
+                "def nums [] {{ [-12 -15] }}; def f [n?: {shape} --verbose(-v)] {{}}; f {prefix}"
+            );
+            let file_suggestions = completer.fetch_completions_within_file(
+                filename.to_str().unwrap(),
+                line.len(),
+                &line,
+            );
+            for suggestions in [
+                file_suggestions,
+                completer.fetch_completions_at(&line, line.len()),
+            ] {
+                let values = suggestions
+                    .iter()
+                    .map(|s| s.suggestion.value.as_str())
+                    .collect::<Vec<_>>();
+                for candidate in &candidates {
+                    assert_eq!(
+                        values.contains(candidate),
+                        prefix == "-1",
+                        "{line}: {values:?}"
+                    );
+                }
+                if prefix == "-" {
+                    assert!(
+                        values.contains(&"--verbose") && values.contains(&"-v"),
+                        "{values:?}"
+                    );
+                }
+            }
+        }
+    }
 }

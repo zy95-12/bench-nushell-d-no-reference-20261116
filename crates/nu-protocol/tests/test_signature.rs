@@ -45,6 +45,7 @@ fn test_signature_chained() {
             shape: SyntaxShape::String,
             var_id: None,
             default_value: None,
+            completion: None,
         })
     );
     assert_eq!(
@@ -55,6 +56,7 @@ fn test_signature_chained() {
             shape: SyntaxShape::String,
             var_id: None,
             default_value: None,
+            completion: None,
         })
     );
     assert_eq!(
@@ -65,6 +67,7 @@ fn test_signature_chained() {
             shape: SyntaxShape::String,
             var_id: None,
             default_value: None,
+            completion: None,
         })
     );
 
@@ -78,6 +81,7 @@ fn test_signature_chained() {
             desc: "required named description".to_string(),
             var_id: None,
             default_value: None,
+            completion: None,
         })
     );
 
@@ -91,6 +95,7 @@ fn test_signature_chained() {
             desc: "required named description".to_string(),
             var_id: None,
             default_value: None,
+            completion: None,
         })
     );
 }
@@ -169,4 +174,31 @@ fn test_signature_round_trip() {
         .for_each(|(lhs, rhs)| assert_eq!(lhs, rhs));
 
     assert_eq!(signature.rest_positional, returned.rest_positional,);
+}
+
+#[test]
+fn unknown_flag_suggestions_are_contextual() {
+    let signature = Signature::build("commandline edit").switch("accept", "execute", Some('A'));
+    assert!(
+        signature
+            .flag_suggestion("accep")
+            .contains("Did you mean '--accept'")
+    );
+    assert!(
+        !Signature::build("other")
+            .switch("append", "append", None)
+            .flag_suggestion("accep")
+            .contains("--accept")
+    );
+}
+
+#[test]
+fn completion_metadata_serialization_roundtrip() {
+    let mut signature = Signature::build("example").required("value", SyntaxShape::String, "value");
+    signature.required_positional[0].completion = Some(nu_protocol::Completion::Static(vec![
+        nu_protocol::Value::test_string("cat"),
+    ]));
+    let json = serde_json::to_string(&signature).unwrap();
+    let restored: Signature = serde_json::from_str(&json).unwrap();
+    assert_eq!(signature, restored);
 }
