@@ -98,7 +98,8 @@ fn first_helper(
         1
     };
 
-    let metadata = input.metadata();
+    let metadata = input.metadata().map(|m| m.with_content_type(None));
+    let input = input.set_metadata(metadata.clone());
 
     // early exit for `first 0`
     if rows == 0 {

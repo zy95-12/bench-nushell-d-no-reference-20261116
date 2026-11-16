@@ -89,6 +89,7 @@ rayon = { workspace = true }
 reedline = { workspace = true, optional = true }
 roxmltree = { workspace = true }
 rusqlite = { workspace = true, features = [
+    "column_decltype",
 	"bundled",
 	"backup",
 	"chrono",

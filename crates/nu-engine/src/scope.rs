@@ -100,7 +100,7 @@ impl<'e, 's> ScopeData<'e, 's> {
                             record! {
                                 "description" => Value::string(x.description, span),
                                 "example" => Value::string(x.example, span),
-                                "result" => x.result.unwrap_or(Value::nothing(span)),
+                                "result" => x.result.map(|v| example_with_span(v, span)).unwrap_or(Value::nothing(span)),
                             },
                             span,
                         )
@@ -572,4 +572,22 @@ fn sort_rows(decls: &mut [Value]) {
         }
         _ => Ordering::Equal,
     });
+}
+
+fn example_with_span(mut value: Value, span: Span) -> Value {
+    match &mut value {
+        Value::List { vals, .. } => {
+            for v in vals {
+                *v = example_with_span(v.clone(), span);
+            }
+        }
+        Value::Record { val, .. } => {
+            for (_, v) in val.to_mut().iter_mut() {
+                *v = example_with_span(v.clone(), span);
+            }
+        }
+        _ => (),
+    }
+    value.set_span(span);
+    value
 }

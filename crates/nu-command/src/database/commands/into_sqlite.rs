@@ -240,6 +240,26 @@ fn insert_in_transaction(
     let table_name = table.name().clone();
     let tx = table.try_init(&first_val)?;
 
+    let column_types: std::collections::HashMap<String, String> = {
+        let stmt = tx
+            .prepare(&format!("SELECT * FROM [{}] LIMIT 0", table_name))
+            .map_err(|e| ShellError::GenericError {
+                error: "Failed to inspect SQLite columns".into(),
+                msg: e.to_string(),
+                span: Some(span),
+                help: None,
+                inner: vec![],
+            })?;
+        stmt.columns()
+            .into_iter()
+            .map(|c| {
+                (
+                    c.name().to_string(),
+                    c.decl_type().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    };
     for stream_value in stream {
         if let Err(err) = signals.check(&span) {
             tx.rollback().map_err(|e| ShellError::GenericError {
@@ -259,7 +279,20 @@ fn insert_in_transaction(
             table_name,
             Itertools::intersperse(val.columns().map(|c| format!("`{c}`")), ", ".to_string())
                 .collect::<String>(),
-            Itertools::intersperse(itertools::repeat_n("?", val.len()), ", ").collect::<String>(),
+            Itertools::intersperse(
+                val.columns().map(|c| {
+                    if column_types
+                        .get(c)
+                        .is_some_and(|t| t.eq_ignore_ascii_case("JSONB"))
+                    {
+                        "jsonb(?)"
+                    } else {
+                        "?"
+                    }
+                }),
+                ", "
+            )
+            .collect::<String>(),
         );
 
         let mut insert_statement =
@@ -336,6 +369,7 @@ fn insert_value(
 // BLOB. The value is a blob of data, stored exactly as it was input.
 fn nu_value_to_sqlite_type(val: &Value) -> Result<&'static str, ShellError> {
     match val.get_type() {
+        Type::List(_) | Type::Record(_) | Type::Table(_) => Ok("JSON"),
         Type::String => Ok("TEXT"),
         Type::Int => Ok("INTEGER"),
         Type::Float => Ok("REAL"),
@@ -358,11 +392,8 @@ fn nu_value_to_sqlite_type(val: &Value) -> Result<&'static str, ShellError> {
         | Type::Closure
         | Type::Custom(_)
         | Type::Error
-        | Type::List(_)
         | Type::Range
-        | Type::Record(_)
-        | Type::Glob
-        | Type::Table(_) => Err(ShellError::OnlySupportsThisInputType {
+        | Type::Glob => Err(ShellError::OnlySupportsThisInputType {
             exp_input_type: "sql".into(),
             wrong_type: val.get_type().to_string(),
             dst_span: Span::unknown(),

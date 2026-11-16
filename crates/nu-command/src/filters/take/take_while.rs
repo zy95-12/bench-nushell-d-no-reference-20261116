@@ -75,7 +75,8 @@ impl Command for TakeWhile {
 
         let mut closure = ClosureEval::new(engine_state, stack, closure);
 
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
         Ok(input
             .into_iter_strict(head)?
             .take_while(move |value| {

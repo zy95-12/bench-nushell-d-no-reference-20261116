@@ -16,6 +16,11 @@ impl Command for Select {
     // FIXME: also add support for --skip
     fn signature(&self) -> Signature {
         Signature::build("select")
+            .switch(
+                "ignore-case",
+                "Access cell paths without regard to case",
+                None,
+            )
             .input_output_types(vec![
                 (Type::record(), Type::record()),
                 (Type::table(), Type::table()),
@@ -112,6 +117,11 @@ produce a table, a list will produce a list, and a record will produce a record.
             || call.has_flag(engine_state, stack, "ignore-errors")?;
         let span = call.head;
 
+        if call.has_flag(engine_state, stack, "ignore-case")? {
+            for path in &mut new_columns {
+                path.make_insensitive();
+            }
+        }
         if optional {
             for cell_path in &mut new_columns {
                 cell_path.make_optional();
@@ -198,6 +208,8 @@ fn select(
     columns: Vec<CellPath>,
     input: PipelineData,
 ) -> Result<PipelineData, ShellError> {
+    let metadata = input.metadata().map(|m| m.with_content_type(None));
+    let input = input.set_metadata(metadata);
     let mut unique_rows: BTreeSet<usize> = BTreeSet::new();
 
     let mut new_columns = vec![];
@@ -227,7 +239,7 @@ fn select(
     let columns = new_columns;
 
     let input = if !unique_rows.is_empty() {
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
         let pipeline_iter: PipelineIterator = input.into_iter();
 
         NthIterator {

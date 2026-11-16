@@ -66,7 +66,8 @@ impl Command for Every {
 
         let skip = call.has_flag(engine_state, stack, "skip")?;
 
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
 
         Ok(input
             .into_iter()

@@ -114,6 +114,13 @@ impl<'a> StateWorkingSet<'a> {
 
     pub fn add_decl(&mut self, decl: Box<dyn Command>) -> DeclId {
         let name = decl.name().as_bytes().to_vec();
+        for (index, byte) in name.iter().enumerate() {
+            if *byte == b' ' && self.find_decl(&name[..index]).is_none() {
+                self.add_decl(Box::new(NamespaceCommand(
+                    String::from_utf8_lossy(&name[..index]).into_owned(),
+                )));
+            }
+        }
 
         self.delta.decls.push(decl);
         let decl_id = self.num_decls() - 1;
@@ -125,9 +132,15 @@ impl<'a> StateWorkingSet<'a> {
     }
 
     pub fn use_decls(&mut self, decls: Vec<(Vec<u8>, DeclId)>) {
-        let overlay_frame = self.last_overlay_mut();
-
         for (name, decl_id) in decls {
+            for (index, byte) in name.iter().enumerate() {
+                if *byte == b' ' && self.find_decl(&name[..index]).is_none() {
+                    self.add_decl(Box::new(NamespaceCommand(
+                        String::from_utf8_lossy(&name[..index]).into_owned(),
+                    )));
+                }
+            }
+            let overlay_frame = self.last_overlay_mut();
             overlay_frame.insert_decl(name, decl_id);
             overlay_frame.visibility.use_decl_id(&decl_id);
         }
@@ -155,6 +168,14 @@ impl<'a> StateWorkingSet<'a> {
 
     pub fn add_predecl(&mut self, decl: Box<dyn Command>) -> Option<DeclId> {
         let name = decl.name().as_bytes().to_vec();
+
+        for (index, byte) in name.iter().enumerate() {
+            if *byte == b' ' && self.find_decl(&name[..index]).is_none() {
+                self.add_decl(Box::new(NamespaceCommand(
+                    String::from_utf8_lossy(&name[..index]).into_owned(),
+                )));
+            }
+        }
 
         self.delta.decls.push(decl);
         let decl_id = self.num_decls() - 1;
@@ -921,6 +942,7 @@ impl<'a> StateWorkingSet<'a> {
         definitions: ResolvedImportPattern,
         prefixed: bool,
     ) {
+        let module_name = name.clone();
         let last_scope_frame = self.delta.last_scope_frame_mut();
 
         last_scope_frame
@@ -947,6 +969,7 @@ impl<'a> StateWorkingSet<'a> {
 
         self.use_decls(definitions.decls);
         self.use_modules(definitions.modules);
+        self.use_modules(vec![(module_name, origin)]);
 
         let mut constants = vec![];
 
@@ -1233,5 +1256,31 @@ impl FileStack {
     /// or the active file doesn't have a parent directory as part of its path.
     pub fn current_working_directory(&self) -> Option<&Path> {
         self.0.last().and_then(|path| path.parent())
+    }
+}
+
+#[derive(Clone)]
+struct NamespaceCommand(String);
+impl Command for NamespaceCommand {
+    fn name(&self) -> &str {
+        &self.0
+    }
+    fn signature(&self) -> Signature {
+        Signature::build(&self.0).category(Category::Core)
+    }
+    fn description(&self) -> &str {
+        "Namespace for subcommands."
+    }
+    fn run(
+        &self,
+        _: &EngineState,
+        _: &mut crate::engine::Stack,
+        call: &crate::engine::Call,
+        _: crate::PipelineData,
+    ) -> Result<crate::PipelineData, crate::ShellError> {
+        Err(crate::ShellError::MissingParameter {
+            param_name: "subcommand".into(),
+            span: call.head,
+        })
     }
 }

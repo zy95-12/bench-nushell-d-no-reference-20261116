@@ -4106,6 +4106,9 @@ pub fn find_in_dirs(
     cwd: &str,
     dirs_var_name: Option<&str>,
 ) -> Option<ParserPath> {
+    if nu_path::is_windows_device_path(filename) {
+        return Some(ParserPath::RealPath(std::path::PathBuf::from(filename)));
+    }
     pub fn find_in_dirs_with_id(
         filename: &str,
         working_set: &StateWorkingSet,

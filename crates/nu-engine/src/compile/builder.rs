@@ -26,6 +26,7 @@ pub(crate) struct BlockBuilder {
     pub(crate) register_allocation_state: Vec<bool>,
     pub(crate) file_count: u32,
     pub(crate) loop_stack: Vec<Loop>,
+    pub(crate) error_handler_depth: usize,
 }
 
 impl BlockBuilder {
@@ -42,6 +43,7 @@ impl BlockBuilder {
             register_allocation_state: vec![true],
             file_count: 0,
             loop_stack: vec![],
+            error_handler_depth: 0,
         }
     }
 
@@ -467,6 +469,7 @@ impl BlockBuilder {
     /// Push a new loop state onto the builder. Creates new labels that must be set.
     pub(crate) fn begin_loop(&mut self) -> Loop {
         let loop_ = Loop {
+            error_handler_depth: self.error_handler_depth,
             break_label: self.label(None),
             continue_label: self.label(None),
         };
@@ -488,6 +491,10 @@ impl BlockBuilder {
                 msg: "`break` called from outside of a loop".into(),
                 span: Some(span),
             })?;
+        let loop_ = *loop_;
+        for _ in loop_.error_handler_depth..self.error_handler_depth {
+            self.push(Instruction::PopErrorHandler.into_spanned(span))?;
+        }
         self.jump(loop_.break_label, span)
     }
 
@@ -500,6 +507,10 @@ impl BlockBuilder {
                 msg: "`continue` called from outside of a loop".into(),
                 span: Some(span),
             })?;
+        let loop_ = *loop_;
+        for _ in loop_.error_handler_depth..self.error_handler_depth {
+            self.push(Instruction::PopErrorHandler.into_spanned(span))?;
+        }
         self.jump(loop_.continue_label, span)
     }
 
@@ -584,6 +595,7 @@ impl BlockBuilder {
 /// Keeps track of the `break` and `continue` target labels for a loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Loop {
+    pub(crate) error_handler_depth: usize,
     pub(crate) break_label: LabelId,
     pub(crate) continue_label: LabelId,
 }

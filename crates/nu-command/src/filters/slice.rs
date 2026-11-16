@@ -65,7 +65,8 @@ impl Command for Slice {
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let head = call.head;
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
         let range: IntRange = call.req(engine_state, stack, 0)?;
 
         // only collect the input if we have any negative indices

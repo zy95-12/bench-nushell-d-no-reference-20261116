@@ -60,7 +60,8 @@ impl Command for Uniq {
             item_mapper(ms.item, ms.flag_ignore_case, ms.index)
         });
 
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
         uniq(
             engine_state,
             stack,

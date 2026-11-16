@@ -25,7 +25,6 @@ use nu_utils::{get_ls_colors, terminal_size};
 type ShellResult<T> = Result<T, ShellError>;
 type NuPathBuf = nu_path::PathBuf<Absolute>;
 
-const STREAM_PAGE_SIZE: usize = 1000;
 const DEFAULT_TABLE_WIDTH: usize = 80;
 
 #[derive(Clone)]
@@ -878,7 +877,8 @@ impl Iterator for PagingTableCreator {
                 // Pull from stream until time runs out or we have enough items
                 (batch, end) = stream_collect(
                     &mut self.stream,
-                    STREAM_PAGE_SIZE,
+                    self.config.table.stream_page_size,
+                    self.config.table.stream_batch_duration,
                     self.engine_state.signals(),
                 );
             }
@@ -931,6 +931,7 @@ impl Iterator for PagingTableCreator {
 fn stream_collect(
     stream: impl Iterator<Item = Value>,
     size: usize,
+    duration_ns: i64,
     signals: &Signals,
 ) -> (Vec<Value>, bool) {
     let start_time = Instant::now();
@@ -941,7 +942,7 @@ fn stream_collect(
         batch.push(item);
 
         // If we've been buffering over a second, go ahead and send out what we have so far
-        if (Instant::now() - start_time).as_secs() >= 1 {
+        if start_time.elapsed().as_nanos() >= duration_ns as u128 {
             end = false;
             break;
         }
@@ -1224,5 +1225,22 @@ fn get_table_width(width_param: Option<i64>) -> usize {
         w as usize
     } else {
         DEFAULT_TABLE_WIDTH
+    }
+}
+
+#[cfg(test)]
+mod streaming_config_tests {
+    use super::*;
+    #[test]
+    fn page_size_and_duration_bound_consumption() {
+        let mut values = (0..5).map(|n| Value::test_int(n as i64));
+        let (batch, end) = stream_collect(&mut values, 2, i64::MAX, &Signals::empty());
+        assert_eq!(batch.len(), 2);
+        assert!(!end);
+        assert_eq!(values.len(), 3);
+        let (batch, end) = stream_collect(&mut values, 10, 0, &Signals::empty());
+        assert_eq!(batch.len(), 1);
+        assert!(!end);
+        assert_eq!(values.len(), 2);
     }
 }

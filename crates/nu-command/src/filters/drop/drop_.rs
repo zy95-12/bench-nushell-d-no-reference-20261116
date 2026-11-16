@@ -77,7 +77,8 @@ impl Command for Drop {
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let head = call.head;
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
         let rows: Option<Spanned<i64>> = call.opt(engine_state, stack, 0)?;
         let mut values = input.into_iter_strict(head)?.collect::<Vec<_>>();
 
