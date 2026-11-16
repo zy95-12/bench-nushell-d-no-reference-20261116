@@ -151,7 +151,7 @@ mod test {
         #[case] expected: &[&str],
     ) {
         let engine_state =
-            nu_command::add_shell_command_context(nu_cmd_lang::create_default_context());
+            nu_cmd_lang::create_default_context_with(&[nu_command::add_shell_command_context]);
         let config = engine_state.get_config().clone();
         let mut completer = NuHelpCompleter::new(engine_state.into(), config);
         let suggestions = completer.complete(line, end);

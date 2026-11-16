@@ -246,7 +246,7 @@ impl Command for External {
                 }
                 Err(stream) => {
                     command.stdin(Stdio::piped());
-                    Some(PipelineData::ByteStream(stream, metadata))
+                    Some(PipelineData::byte_stream(stream, metadata))
                 }
             },
             PipelineData::Empty => {
@@ -336,7 +336,7 @@ impl Command for External {
             child.ignore_error(true);
         }
 
-        Ok(PipelineData::ByteStream(
+        Ok(PipelineData::byte_stream(
             ByteStream::child(child, call.head),
             None,
         ))
@@ -788,22 +788,22 @@ mod test {
         engine_state.add_env_var("PWD".into(), Value::string(cwd, Span::test_data()));
 
         let mut buf = vec![];
-        let input = PipelineData::Empty;
+        let input = PipelineData::empty();
         write_pipeline_data(engine_state.clone(), stack.clone(), input, &mut buf).unwrap();
         assert_eq!(buf, b"");
 
         let mut buf = vec![];
-        let input = PipelineData::Value(Value::string("foo", Span::unknown()), None);
+        let input = PipelineData::value(Value::string("foo", Span::unknown()), None);
         write_pipeline_data(engine_state.clone(), stack.clone(), input, &mut buf).unwrap();
         assert_eq!(buf, b"foo");
 
         let mut buf = vec![];
-        let input = PipelineData::Value(Value::binary(b"foo", Span::unknown()), None);
+        let input = PipelineData::value(Value::binary(b"foo", Span::unknown()), None);
         write_pipeline_data(engine_state.clone(), stack.clone(), input, &mut buf).unwrap();
         assert_eq!(buf, b"foo");
 
         let mut buf = vec![];
-        let input = PipelineData::ByteStream(
+        let input = PipelineData::byte_stream(
             ByteStream::read(
                 b"foo".as_slice(),
                 Span::unknown(),

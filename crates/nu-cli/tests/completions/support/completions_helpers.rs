@@ -11,7 +11,7 @@ use reedline::Suggestion;
 use std::path::MAIN_SEPARATOR;
 
 fn create_default_context() -> EngineState {
-    nu_command::add_shell_command_context(nu_cmd_lang::create_default_context())
+    nu_cmd_lang::create_default_context_with(&[nu_command::add_shell_command_context])
 }
 
 pub fn new_engine_helper(pwd: AbsolutePathBuf) -> (AbsolutePathBuf, String, EngineState, Stack) {
@@ -199,7 +199,7 @@ pub fn merge_input(
             engine_state,
             stack,
             &block,
-            PipelineData::Value(Value::nothing(Span::unknown()), None),
+            PipelineData::value(Value::nothing(Span::unknown()), None),
         )
         .is_ok()
     );

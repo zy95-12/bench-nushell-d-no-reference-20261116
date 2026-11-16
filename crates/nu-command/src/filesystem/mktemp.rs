@@ -121,7 +121,7 @@ impl Command for Mktemp {
                     });
                 }
             };
-            Ok(PipelineData::Value(Value::string(res, span), None))
+            Ok(PipelineData::value(Value::string(res, span), None))
         })
     }
 }

@@ -133,7 +133,7 @@ pub(super) fn start_editor(
         Some(post_wait_callback),
     )?;
 
-    Ok(PipelineData::ByteStream(
+    Ok(PipelineData::byte_stream(
         ByteStream::child(child, call.head),
         None,
     ))

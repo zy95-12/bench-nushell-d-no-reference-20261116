@@ -1677,8 +1677,9 @@ mod accept_tests {
                 ("commandline edit '$env.AUTHOR_RESULT += ';", "--append '1'"),
                 ("commandline edit '$env.AUTHOR_RESULT += ';", "--insert '1'"),
             ] {
-                let mut engine =
-                    nu_command::add_shell_command_context(nu_cmd_lang::create_default_context());
+                let mut engine = nu_cmd_lang::create_default_context_with(&[
+                    nu_command::add_shell_command_context,
+                ]);
                 engine.add_env_var(
                     "PWD".into(),
                     Value::test_string(std::env::current_dir().unwrap().to_string_lossy()),
