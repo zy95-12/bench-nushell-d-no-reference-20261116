@@ -55,7 +55,18 @@ impl Completer for VariableCompletion {
         // command_completions).
         let mut removed_overlays = vec![];
         // Working set scope vars
-        for scope_frame in working_set.delta.scope.iter().rev() {
+        if let Some(vars) = &working_set.completion_variables {
+            for (name, id) in vars {
+                add_candidate(name, id);
+            }
+        }
+        for scope_frame in working_set
+            .delta
+            .scope
+            .iter()
+            .rev()
+            .filter(|_| working_set.completion_variables.is_none())
+        {
             for overlay_frame in scope_frame.active_overlays(&mut removed_overlays).rev() {
                 for (name, var_id) in &overlay_frame.vars {
                     add_candidate(name, var_id);
@@ -68,6 +79,7 @@ impl Completer for VariableCompletion {
             .permanent_state
             .active_overlays(&removed_overlays)
             .rev()
+            .filter(|_| working_set.completion_variables.is_none())
         {
             for (name, var_id) in &overlay_frame.vars {
                 add_candidate(name, var_id);

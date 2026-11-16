@@ -249,6 +249,7 @@ pub(crate) fn create_nu_constant(engine_state: &EngineState, span: Span) -> Valu
         Value::bool(engine_state.is_interactive, span),
     );
 
+    record.push("is-lsp", Value::bool(engine_state.is_lsp, span));
     record.push("is-login", Value::bool(engine_state.is_login, span));
 
     record.push(

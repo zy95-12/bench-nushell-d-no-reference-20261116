@@ -43,7 +43,6 @@ pub(crate) fn gather_commandline_args() -> (Vec<String>, String, Vec<String>) {
             | "--threads"
             | "-t"
             | "--include-path"
-            | "--lsp"
             | "--ide-goto-def"
             | "--ide-hover"
             | "--ide-complete"

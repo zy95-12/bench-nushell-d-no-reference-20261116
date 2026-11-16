@@ -484,7 +484,13 @@ fn loop_iteration(ctx: LoopContext) -> (bool, Stack, Reedline) {
 
     start_time = std::time::Instant::now();
     line_editor = line_editor.with_transient_prompt(transient_prompt);
-    let input = line_editor.read_line(nu_prompt);
+    let accepted = take_accepted_buffer(engine_state);
+    let input = if let Some(buffer) = accepted {
+        line_editor.run_edit_commands(&[EditCommand::Clear]);
+        Ok(Signal::Success(buffer))
+    } else {
+        line_editor.read_line(nu_prompt)
+    };
     // we got our inputs, we can now drop our stack references
     // This lists all of the stack references that we have cleaned up
     line_editor = line_editor
@@ -1124,10 +1130,23 @@ fn run_shell_integration_reset_application_mode() {
 }
 
 ///
-/// Clear the screen and output anything remaining in the EngineState buffer.
-///
+/// Consume an edit request once, before asking the line editor for input.
+fn take_accepted_buffer(engine_state: &EngineState) -> Option<String> {
+    let mut repl = engine_state.repl_state.lock().expect("repl state mutex");
+    if std::mem::take(&mut repl.accept) {
+        repl.cursor_pos = 0;
+        Some(std::mem::take(&mut repl.buffer))
+    } else {
+        None
+    }
+}
+
+/// Display a pending edit unless it was requested for immediate evaluation.
 fn flush_engine_state_repl_buffer(engine_state: &mut EngineState, line_editor: &mut Reedline) {
     let mut repl = engine_state.repl_state.lock().expect("repl state mutex");
+    if repl.accept {
+        return;
+    }
     line_editor.run_edit_commands(&[
         EditCommand::Clear,
         EditCommand::InsertString(repl.buffer.to_string()),
@@ -1643,5 +1662,69 @@ mod test_auto_cd {
         let input = "now🍪is";
         let actual = escape_special_vscode_bytes(input).unwrap();
         assert_eq!(input, actual);
+    }
+}
+
+#[cfg(test)]
+mod accept_tests {
+    use super::*;
+
+    #[test]
+    fn edited_buffers_are_evaluated_once_in_all_modes() {
+        for flag in ["--accept", "-A"] {
+            for (setup, edit) in [
+                ("", "--replace '$env.AUTHOR_RESULT += 1'"),
+                ("commandline edit '$env.AUTHOR_RESULT += ';", "--append '1'"),
+                ("commandline edit '$env.AUTHOR_RESULT += ';", "--insert '1'"),
+            ] {
+                let mut engine =
+                    nu_command::add_shell_command_context(nu_cmd_lang::create_default_context());
+                engine.add_env_var(
+                    "PWD".into(),
+                    Value::test_string(std::env::current_dir().unwrap().to_string_lossy()),
+                );
+                let mut working_set = StateWorkingSet::new(&engine);
+                working_set.add_decl(Box::new(crate::commands::CommandlineEdit));
+                engine.merge_delta(working_set.render()).unwrap();
+                let mut stack = Stack::new();
+                stack.add_env_var("AUTHOR_RESULT".into(), Value::test_int(41));
+                let code = format!("{setup} commandline edit {flag} {edit}");
+                assert_eq!(
+                    crate::util::eval_source(
+                        &mut engine,
+                        &mut stack,
+                        code.as_bytes(),
+                        "edit-test",
+                        PipelineData::empty(),
+                        false
+                    ),
+                    0
+                );
+                assert!(engine.repl_state.lock().unwrap().accept);
+                let mut prompt = NushellPrompt::new(false, false, engine.clone(), Stack::new());
+                let temp = tempfile::NamedTempFile::new().unwrap();
+                let mut entry_num = 0;
+                let (_, stack, _) = loop_iteration(LoopContext {
+                    engine_state: &mut engine,
+                    stack,
+                    line_editor: Reedline::create(),
+                    nu_prompt: &mut prompt,
+                    temp_file: temp.path(),
+                    use_color: false,
+                    entry_num: &mut entry_num,
+                    hostname: None,
+                });
+                assert!(!engine.repl_state.lock().unwrap().accept);
+                assert_eq!(
+                    stack
+                        .get_env_var(&engine, "AUTHOR_RESULT")
+                        .unwrap()
+                        .as_int()
+                        .unwrap(),
+                    42
+                );
+                assert!(take_accepted_buffer(&engine).is_none());
+            }
+        }
     }
 }

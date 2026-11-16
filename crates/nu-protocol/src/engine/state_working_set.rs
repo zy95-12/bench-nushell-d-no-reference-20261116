@@ -32,6 +32,9 @@ pub struct StateWorkingSet<'a> {
     pub parse_errors: Vec<ParseError>,
     pub parse_warnings: Vec<ParseWarning>,
     pub compile_errors: Vec<CompileError>,
+    /// Cursor for editor variable completion; absent during normal parsing.
+    pub completion_cursor: Option<usize>,
+    pub completion_variables: Option<Vec<(Vec<u8>, VarId)>>,
 }
 
 impl<'a> StateWorkingSet<'a> {
@@ -51,6 +54,8 @@ impl<'a> StateWorkingSet<'a> {
             parse_errors: vec![],
             parse_warnings: vec![],
             compile_errors: vec![],
+            completion_cursor: None,
+            completion_variables: None,
         }
     }
 
@@ -426,6 +431,27 @@ impl<'a> StateWorkingSet<'a> {
 
         // if no files with span were found, fall back on permanent ones
         self.permanent_state.get_span_contents(span)
+    }
+
+    pub fn capture_completion_variables(&mut self, span: Span) {
+        if self
+            .completion_cursor
+            .is_some_and(|cursor| span.start <= cursor && cursor <= span.end)
+        {
+            let mut removed = vec![];
+            let mut vars = vec![];
+            for scope in self.delta.scope.iter().rev() {
+                for overlay in scope.active_overlays(&mut removed).rev() {
+                    vars.extend(overlay.vars.iter().map(|(name, id)| (name.clone(), *id)));
+                }
+            }
+            for overlay in self.permanent_state.active_overlays(&removed).rev() {
+                vars.extend(overlay.vars.iter().map(|(name, id)| (name.clone(), *id)));
+            }
+            let mut seen = HashSet::new();
+            vars.retain(|(name, _)| seen.insert(name.clone()));
+            self.completion_variables = Some(vars);
+        }
     }
 
     pub fn enter_scope(&mut self) {

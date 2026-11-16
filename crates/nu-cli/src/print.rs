@@ -55,7 +55,7 @@ Since this command has no output, there is no point in piping it with other comm
     ) -> Result<PipelineData, ShellError> {
         let args: Vec<Value> = call.rest(engine_state, stack, 0)?;
         let no_newline = call.has_flag(engine_state, stack, "no-newline")?;
-        let to_stderr = call.has_flag(engine_state, stack, "stderr")?;
+        let to_stderr = engine_state.is_lsp || call.has_flag(engine_state, stack, "stderr")?;
         let raw = call.has_flag(engine_state, stack, "raw")?;
 
         // This will allow for easy printing of pipelines as well

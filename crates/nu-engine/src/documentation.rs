@@ -648,12 +648,9 @@ impl HelpStyle {
     }
 }
 
-/// Make syntax shape presentable by stripping custom completer info
+/// The syntactic type displayed in generated help.
 fn document_shape(shape: &SyntaxShape) -> &SyntaxShape {
-    match shape {
-        SyntaxShape::CompleterWrapper(inner_shape, _) => inner_shape,
-        _ => shape,
-    }
+    shape
 }
 
 #[derive(PartialEq)]
@@ -749,7 +746,9 @@ where
 
     let mut long_desc = String::new();
     let _ = write!(long_desc, "\n{help_section_name}Flags{RESET}:\n");
-    for flag in &signature.named {
+    let mut flags = signature.named.iter().collect::<Vec<_>>();
+    flags.sort_by_key(|flag| !flag.required);
+    for flag in flags {
         // Indentation
         long_desc.push_str("  ");
         // Short flag shown before long flag
@@ -869,5 +868,25 @@ mod tests {
             highlight_code(haystack, &engine_state, &mut stack),
             Cow::Borrowed(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod flag_order_tests {
+    use super::*;
+
+    #[test]
+    fn required_flags_precede_optional_flags_in_help() {
+        let mut signature = Signature::build("example")
+            .switch("optional", "optional", None)
+            .named("required", SyntaxShape::String, "required", None);
+        signature
+            .named
+            .iter_mut()
+            .find(|flag| flag.long == "required")
+            .unwrap()
+            .required = true;
+        let help = get_flags_section(&signature, &HelpStyle::default(), |_| String::new());
+        assert!(help.find("--required").unwrap() < help.find("--optional").unwrap());
     }
 }

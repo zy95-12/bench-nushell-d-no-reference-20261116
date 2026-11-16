@@ -576,6 +576,14 @@ mod tests {
     ) -> Result<lsp_server::Notification, String> {
         let text = std::fs::read_to_string(uri_to_path(&uri)).map_err(|e| e.to_string())?;
 
+        open_with_text(client_connection, uri, text)
+    }
+
+    pub(crate) fn open_with_text(
+        client_connection: &Connection,
+        uri: Uri,
+        text: String,
+    ) -> Result<lsp_server::Notification, String> {
         client_connection
             .sender
             .send(Message::Notification(lsp_server::Notification {

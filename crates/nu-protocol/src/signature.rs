@@ -1,6 +1,6 @@
 use crate::{
-    BlockId, DeprecationEntry, Example, FromValue, PipelineData, ShellError, SyntaxShape, Type,
-    Value, VarId,
+    BlockId, DeclId, DeprecationEntry, Example, FromValue, PipelineData, ShellError, SyntaxShape,
+    Type, Value, VarId,
     engine::{Call, Command, CommandType, EngineState, Stack},
 };
 use nu_derive_value::FromValue as DeriveFromValue;
@@ -11,6 +11,13 @@ use std::fmt::Write;
 // have this without such an export.
 // The `FromValue` derive macro fully qualifies paths to "nu_protocol".
 use crate as nu_protocol;
+
+/// Completion candidates attached to a command signature argument.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Completion {
+    Custom(DeclId),
+    Static(Vec<Value>),
+}
 
 /// The signature definition of a named flag that either accepts a value or acts as a toggle flag
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +31,8 @@ pub struct Flag {
     // For custom commands
     pub var_id: Option<VarId>,
     pub default_value: Option<Value>,
+    #[serde(default)]
+    pub completion: Option<Completion>,
 }
 
 /// The signature definition for a positional argument
@@ -36,6 +45,8 @@ pub struct PositionalArg {
     // For custom commands
     pub var_id: Option<VarId>,
     pub default_value: Option<Value>,
+    #[serde(default)]
+    pub completion: Option<Completion>,
 }
 
 /// Command categories
@@ -255,6 +266,7 @@ impl Signature {
             required: false,
             var_id: None,
             default_value: None,
+            completion: None,
         };
         self.named.push(flag);
         self
@@ -319,6 +331,7 @@ impl Signature {
             shape: shape.into(),
             var_id: None,
             default_value: None,
+            completion: None,
         });
 
         self
@@ -337,6 +350,7 @@ impl Signature {
             shape: shape.into(),
             var_id: None,
             default_value: None,
+            completion: None,
         });
 
         self
@@ -354,6 +368,7 @@ impl Signature {
             shape: shape.into(),
             var_id: None,
             default_value: None,
+            completion: None,
         });
 
         self
@@ -393,6 +408,7 @@ impl Signature {
             desc: desc.into(),
             var_id: None,
             default_value: None,
+            completion: None,
         });
 
         self
@@ -416,6 +432,7 @@ impl Signature {
             desc: desc.into(),
             var_id: None,
             default_value: None,
+            completion: None,
         });
 
         self
@@ -438,6 +455,7 @@ impl Signature {
             desc: desc.into(),
             var_id: None,
             default_value: None,
+            completion: None,
         });
 
         self
@@ -614,6 +632,30 @@ impl Signature {
             attributes,
             examples,
         })
+    }
+
+    pub fn flag_suggestion(&self, input: &str) -> String {
+        let names = self
+            .named
+            .iter()
+            .flat_map(|flag| {
+                let mut names = vec![format!("--{}", flag.long)];
+                if let Some(short) = flag.short {
+                    names.push(format!("-{short}"));
+                }
+                names
+            })
+            .collect::<Vec<_>>();
+        let input = if input.starts_with('-') {
+            input.to_string()
+        } else {
+            format!("--{input}")
+        };
+        let available = self.clone().formatted_flags();
+        match crate::did_you_mean(&names, &input) {
+            Some(suggestion) => format!("Did you mean '{suggestion}'? {available}"),
+            None => available,
+        }
     }
 
     pub fn formatted_flags(self) -> String {

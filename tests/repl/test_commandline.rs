@@ -140,3 +140,8 @@ fn commandline_test_cursor_end() -> TestResult {
 fn commandline_test_cursor_type() -> TestResult {
     run_test("commandline get-cursor | describe", "int")
 }
+
+#[test]
+fn commandline_unknown_flag_suggests_actual_flags() -> TestResult {
+    fail_test("commandline edit --accep '42'", "Did you mean '--accept'")
+}

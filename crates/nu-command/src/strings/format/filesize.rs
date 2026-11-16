@@ -98,8 +98,8 @@ impl Command for FormatFilesize {
     fn examples(&self) -> Vec<Example> {
         vec![
             Example {
-                description: "Convert the size column to KB",
-                example: "ls | format filesize KB size",
+                description: "Convert the size column to kB",
+                example: "ls | format filesize kB size",
                 result: None,
             },
             Example {
