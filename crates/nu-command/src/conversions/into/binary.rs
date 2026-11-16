@@ -4,6 +4,7 @@ use nu_engine::command_prelude::*;
 struct Arguments {
     cell_paths: Option<Vec<CellPath>>,
     compact: bool,
+    endian: String,
 }
 
 impl CmdArgument for Arguments {
@@ -34,6 +35,12 @@ impl Command for IntoBinary {
                 (Type::record(), Type::record()),
             ])
             .allow_variants_without_examples(true) // TODO: supply exhaustive examples
+            .named(
+                "endian",
+                SyntaxShape::String,
+                "Byte order: native, little, or big",
+                Some('e'),
+            )
             .switch("compact", "output without padding zeros", Some('c'))
             .rest(
                 "rest",
@@ -124,6 +131,16 @@ fn into_binary(
     input: PipelineData,
 ) -> Result<PipelineData, ShellError> {
     let head = call.head;
+    let endian: String = call
+        .get_flag(engine_state, stack, "endian")?
+        .unwrap_or_else(|| "native".into());
+    if !matches!(endian.as_str(), "native" | "little" | "big") {
+        return Err(ShellError::IncorrectValue {
+            msg: "Expected native, little, or big".into(),
+            val_span: head,
+            call_span: head,
+        });
+    }
     let cell_paths = call.rest(engine_state, stack, 0)?;
     let cell_paths = (!cell_paths.is_empty()).then_some(cell_paths);
 
@@ -136,6 +153,7 @@ fn into_binary(
     } else {
         let args = Arguments {
             cell_paths,
+            endian,
             compact: call.has_flag(engine_state, stack, "compact")?,
         };
         operate(action, args, input, head, engine_state.signals())
@@ -168,10 +186,30 @@ fn action(input: &Value, args: &Arguments, span: Span) -> Value {
         ),
     };
 
+    let little = match args.endian.as_str() {
+        "little" => true,
+        "big" => false,
+        _ => cfg!(target_endian = "little"),
+    };
+    let mut value = value;
+    if little != cfg!(target_endian = "little")
+        && matches!(
+            input,
+            Value::Int { .. }
+                | Value::Float { .. }
+                | Value::Filesize { .. }
+                | Value::Bool { .. }
+                | Value::Duration { .. }
+        )
+    {
+        if let Value::Binary { val, .. } = &mut value {
+            val.reverse();
+        }
+    }
     if args.compact {
         let val_span = value.span();
         if let Value::Binary { val, .. } = value {
-            let val = if cfg!(target_endian = "little") {
+            let val = if little {
                 match val.iter().rposition(|&x| x != 0) {
                     Some(idx) => &val[..idx + 1],
 
@@ -219,6 +257,7 @@ mod test {
             &Arguments {
                 cell_paths: None,
                 compact: true,
+                endian: "native".into(),
             },
             Span::test_data(),
         );

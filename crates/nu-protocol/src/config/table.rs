@@ -339,6 +339,9 @@ impl UpdateFromValue for TableIndent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableConfig {
     pub mode: TableMode,
+    /// Maximum batch buffering time in nanoseconds.
+    pub stream_batch_duration: i64,
+    pub stream_page_size: usize,
     pub index_mode: TableIndexMode,
     pub show_empty: bool,
     pub padding: TableIndent,
@@ -357,6 +360,8 @@ impl IntoValue for TableConfig {
             .into_value(span);
 
         record! {
+            "stream_batch_duration" => Value::duration(self.stream_batch_duration, span),
+            "stream_page_size" => (self.stream_page_size as i64).into_value(span),
             "mode" => self.mode.into_value(span),
             "index_mode" => self.index_mode.into_value(span),
             "show_empty" => self.show_empty.into_value(span),
@@ -374,6 +379,8 @@ impl IntoValue for TableConfig {
 impl Default for TableConfig {
     fn default() -> Self {
         Self {
+            stream_batch_duration: 1_000_000_000,
+            stream_page_size: 1000,
             mode: TableMode::Rounded,
             index_mode: TableIndexMode::Always,
             show_empty: true,
@@ -402,6 +409,14 @@ impl UpdateFromValue for TableConfig {
         for (col, val) in record.iter() {
             let path = &mut path.push(col);
             match col.as_str() {
+                "stream_page_size" => match val {
+                    Value::Int { val: n, .. } if *n > 0 => self.stream_page_size = *n as usize,
+                    _ => errors.invalid_value(path, "a positive integer", val),
+                },
+                "stream_batch_duration" => match val {
+                    Value::Duration { val: n, .. } if *n >= 0 => self.stream_batch_duration = *n,
+                    _ => errors.invalid_value(path, "a non-negative duration", val),
+                },
                 "mode" => self.mode.update(val, path, errors),
                 "index_mode" => self.index_mode.update(val, path, errors),
                 "show_empty" => self.show_empty.update(val, path, errors),

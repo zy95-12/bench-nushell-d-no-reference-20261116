@@ -27,3 +27,5 @@ mod test_type_check;
 mod tests;
 
 mod test_language_correctness;
+
+mod test_predictable_data;

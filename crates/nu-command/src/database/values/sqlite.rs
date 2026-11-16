@@ -380,6 +380,7 @@ impl CustomValue for SQLiteDatabase {
         _self_span: Span,
         _index: usize,
         path_span: Span,
+        _optional: bool,
     ) -> Result<Value, ShellError> {
         // In theory we could support this, but tables don't have an especially well-defined order
         Err(ShellError::IncompatiblePathAccess { type_name: "SQLite databases do not support integer-indexed access. Try specifying a table name instead".into(), span: path_span })
@@ -390,6 +391,8 @@ impl CustomValue for SQLiteDatabase {
         _self_span: Span,
         column_name: String,
         path_span: Span,
+        _optional: bool,
+        _casing: nu_protocol::casing::Casing,
     ) -> Result<Value, ShellError> {
         let db = open_sqlite_db(&self.path, path_span)?;
         read_single_table(db, column_name, path_span, &self.signals)
@@ -442,6 +445,23 @@ pub fn value_to_sql(value: Value) -> Result<Box<dyn rusqlite::ToSql>, ShellError
         Value::String { val, .. } => Box::new(val),
         Value::Binary { val, .. } => Box::new(val),
         Value::Nothing { .. } => Box::new(rusqlite::types::Null),
+        val @ (Value::Record { .. } | Value::List { .. }) => {
+            let json = crate::value_to_json_value(
+                &nu_protocol::engine::EngineState::new(),
+                &val,
+                val.span(),
+                false,
+            )?;
+            Box::new(
+                serde_json::to_string(&json).map_err(|e| ShellError::GenericError {
+                    error: "Cannot serialize SQLite JSON value".into(),
+                    msg: e.to_string(),
+                    span: Some(val.span()),
+                    help: None,
+                    inner: vec![],
+                })?,
+            )
+        }
         val => {
             return Err(ShellError::OnlySupportsThisInputType {
                 exp_input_type:
@@ -655,10 +675,28 @@ pub fn convert_sqlite_row_to_nu_value(row: &Row, span: Span, column_names: &[Str
         .iter()
         .enumerate()
         .map(|(i, col)| {
-            (
-                col.clone(),
-                convert_sqlite_value_to_nu_value(row.get_ref_unwrap(i), span),
-            )
+            (col.clone(), {
+                let value = row.get_ref_unwrap(i);
+                let columns = row.as_ref().columns();
+                let declared = columns[i].decl_type().unwrap_or("");
+                if declared.eq_ignore_ascii_case("JSON") || declared.eq_ignore_ascii_case("JSONB") {
+                    let text = match value {
+                        ValueRef::Text(bytes) => String::from_utf8(bytes.to_vec()).ok(),
+                        ValueRef::Blob(bytes) => Connection::open_in_memory().ok().and_then(|db| {
+                            db.query_row("SELECT json(?1)", [bytes], |row| row.get::<_, String>(0))
+                                .ok()
+                        }),
+                        _ => None,
+                    };
+                    match text {
+                        Some(text) => crate::convert_string_to_value_strict(&text, span)
+                            .unwrap_or_else(|e| Value::error(e, span)),
+                        None => convert_sqlite_value_to_nu_value(value, span),
+                    }
+                } else {
+                    convert_sqlite_value_to_nu_value(value, span)
+                }
+            })
         })
         .collect();
 
@@ -787,5 +825,34 @@ mod test {
         });
 
         assert_eq!(converted_db, expected);
+    }
+}
+
+#[cfg(test)]
+mod json_regressions {
+    use super::*;
+    use nu_protocol::record;
+    #[test]
+    fn nested_json_and_jsonb_are_structured_but_text_is_not() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE data (j JSON, b JSONB, t TEXT)")
+            .unwrap();
+        let value = Value::test_record(
+            record! { "nested" => Value::test_list(vec![Value::test_int(1), Value::test_bool(true)]) },
+        );
+        let json = value_to_sql(value.clone()).unwrap();
+        db.execute("INSERT INTO data VALUES (?1, jsonb(?1), ?1)", [&*json])
+            .unwrap();
+        let mut stmt = db.prepare("SELECT * FROM data").unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        let actual = convert_sqlite_row_to_nu_value(
+            rows.next().unwrap().unwrap(),
+            Span::test_data(),
+            &["j".into(), "b".into(), "t".into()],
+        );
+        let record = actual.as_record().unwrap();
+        assert_eq!(record.get("j"), Some(&value));
+        assert_eq!(record.get("b"), Some(&value));
+        assert!(matches!(record.get("t"), Some(Value::String { .. })));
     }
 }

@@ -7,6 +7,7 @@ use unicode_segmentation::UnicodeSegmentation;
 struct Arguments {
     cell_paths: Option<Vec<CellPath>>,
     graphemes: bool,
+    chars: bool,
 }
 
 impl CmdArgument for Arguments {
@@ -32,6 +33,7 @@ impl Command for StrLength {
                 (Type::record(), Type::record()),
             ])
             .allow_variants_without_examples(true)
+            .switch("chars", "Count Unicode scalar values", Some('c'))
             .switch(
                 "grapheme-clusters",
                 "count length using grapheme clusters (all visible chars have length 1)",
@@ -51,7 +53,7 @@ impl Command for StrLength {
     }
 
     fn description(&self) -> &str {
-        "Output the length of any strings in the pipeline."
+        "Count UTF-8 bytes in strings, or count Unicode scalar values with --chars or grapheme clusters with --grapheme-clusters."
     }
 
     fn search_terms(&self) -> Vec<&str> {
@@ -76,6 +78,7 @@ impl Command for StrLength {
             call,
             input,
             grapheme_flags(engine_state, stack, call)?,
+            call.has_flag(engine_state, stack, "chars")?,
         )
     }
 
@@ -92,11 +95,17 @@ impl Command for StrLength {
             call,
             input,
             grapheme_flags_const(working_set, call)?,
+            call.has_flag_const(working_set, "chars")?,
         )
     }
 
     fn examples(&self) -> Vec<Example> {
         vec![
+            Example {
+                description: "Count Unicode scalar values",
+                example: "'hällo' | str length --chars",
+                result: Some(Value::test_int(5)),
+            },
             Example {
                 description: "Return the lengths of a string",
                 example: "'hello' | str length",
@@ -125,10 +134,18 @@ fn run(
     call: &Call,
     input: PipelineData,
     graphemes: bool,
+    chars: bool,
 ) -> Result<PipelineData, ShellError> {
+    if graphemes && chars {
+        return Err(ShellError::IncompatibleParametersSingle {
+            msg: "--chars and --grapheme-clusters cannot be used together".into(),
+            span: call.head,
+        });
+    }
     let args = Arguments {
         cell_paths: (!cell_paths.is_empty()).then_some(cell_paths),
         graphemes,
+        chars,
     };
     operate(action, args, input, call.head, engine_state.signals())
 }
@@ -138,6 +155,8 @@ fn action(input: &Value, arg: &Arguments, head: Span) -> Value {
         Value::String { val, .. } => Value::int(
             if arg.graphemes {
                 val.graphemes(true).count()
+            } else if arg.chars {
+                val.chars().count()
             } else {
                 val.len()
             } as i64,
@@ -167,6 +186,7 @@ mod test {
         let options = Arguments {
             cell_paths: None,
             graphemes: false,
+            chars: false,
         };
 
         let actual = action(&word, &options, Span::test_data());

@@ -29,6 +29,7 @@ impl Command for IntoString {
     fn signature(&self) -> Signature {
         Signature::build("into string")
             .input_output_types(vec![
+                (Type::CellPath, Type::String),
                 (Type::Binary, Type::String),
                 (Type::Int, Type::String),
                 (Type::Number, Type::String),
@@ -215,6 +216,7 @@ fn action(input: &Value, args: &Arguments, span: Span) -> Value {
         }
         Value::Bool { val, .. } => Value::string(val.to_string(), span),
         Value::Date { val, .. } => Value::string(val.format("%c").to_string(), span),
+        Value::CellPath { val, .. } => Value::string(val.to_string(), span),
         Value::String { val, .. } => Value::string(val, span),
         Value::Glob { val, .. } => Value::string(val, span),
         Value::Filesize { val, .. } => {

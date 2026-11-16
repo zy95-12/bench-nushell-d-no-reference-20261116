@@ -215,7 +215,10 @@ fn convert_string_to_value(string_input: &str, span: Span) -> Result<Value, Shel
     }
 }
 
-fn convert_string_to_value_strict(string_input: &str, span: Span) -> Result<Value, ShellError> {
+pub(crate) fn convert_string_to_value_strict(
+    string_input: &str,
+    span: Span,
+) -> Result<Value, ShellError> {
     match serde_json::from_str(string_input) {
         Ok(value) => Ok(convert_nujson_to_value(value, span)),
         Err(err) => Err(if err.is_syntax() {

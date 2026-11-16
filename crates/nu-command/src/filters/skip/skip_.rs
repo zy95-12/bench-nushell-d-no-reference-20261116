@@ -67,7 +67,8 @@ impl Command for Skip {
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let n: Option<Value> = call.opt(engine_state, stack, 0)?;
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
 
         let n: usize = match n {
             Some(v) => {

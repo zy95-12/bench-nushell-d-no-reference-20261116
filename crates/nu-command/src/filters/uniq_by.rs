@@ -67,7 +67,8 @@ impl Command for UniqBy {
             });
         }
 
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
 
         let vec: Vec<_> = input.into_iter().collect();
         match validate(&vec, &columns, call.head) {

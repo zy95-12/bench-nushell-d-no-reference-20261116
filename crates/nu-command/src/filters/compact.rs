@@ -92,7 +92,8 @@ pub fn compact(
     compact_empties: bool,
 ) -> Result<PipelineData, ShellError> {
     let columns: Vec<String> = call.rest(engine_state, stack, 0)?;
-    let metadata = input.metadata();
+    let metadata = input.metadata().map(|m| m.with_content_type(None));
+    let input = input.set_metadata(metadata.clone());
     input
         .filter(
             move |item| {

@@ -36,6 +36,7 @@ pub trait CustomValue: fmt::Debug + Send + Sync {
         self_span: Span,
         index: usize,
         path_span: Span,
+        _optional: bool,
     ) -> Result<Value, ShellError> {
         let _ = (self_span, index);
         Err(ShellError::IncompatiblePathAccess {
@@ -50,6 +51,8 @@ pub trait CustomValue: fmt::Debug + Send + Sync {
         self_span: Span,
         column_name: String,
         path_span: Span,
+        _optional: bool,
+        _casing: crate::casing::Casing,
     ) -> Result<Value, ShellError> {
         let _ = (self_span, column_name);
         Err(ShellError::IncompatiblePathAccess {
@@ -94,5 +97,83 @@ pub trait CustomValue: fmt::Debug + Send + Sync {
     /// The default is `false`.
     fn notify_plugin_on_drop(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod path_option_tests {
+    use super::*;
+    use crate::{
+        ast::{CellPath, PathMember},
+        casing::Casing,
+    };
+
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    struct PathOptions;
+
+    #[typetag::serde]
+    impl CustomValue for PathOptions {
+        fn clone_value(&self, span: Span) -> Value {
+            Value::custom(Box::new(self.clone()), span)
+        }
+        fn type_name(&self) -> String {
+            "path-options".into()
+        }
+        fn to_base_value(&self, span: Span) -> Result<Value, ShellError> {
+            Ok(Value::nothing(span))
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_mut_any(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn follow_path_int(
+            &self,
+            _: Span,
+            _: usize,
+            span: Span,
+            optional: bool,
+        ) -> Result<Value, ShellError> {
+            Ok(Value::bool(optional, span))
+        }
+        fn follow_path_string(
+            &self,
+            _: Span,
+            _: String,
+            span: Span,
+            optional: bool,
+            casing: Casing,
+        ) -> Result<Value, ShellError> {
+            Ok(Value::bool(optional && casing == Casing::Insensitive, span))
+        }
+    }
+
+    #[test]
+    fn custom_paths_receive_optional_and_casing_options() {
+        let value = Value::custom(Box::new(PathOptions), Span::test_data());
+        for member in [
+            PathMember::test_int(0, true),
+            PathMember::test_string("name".into(), true, Casing::Insensitive),
+        ] {
+            let path = CellPath {
+                members: vec![member],
+            };
+            assert_eq!(
+                value.follow_cell_path(&path.members).unwrap().into_owned(),
+                Value::test_bool(true)
+            );
+        }
+        let path = CellPath {
+            members: vec![PathMember::test_string(
+                "name".into(),
+                false,
+                Casing::Sensitive,
+            )],
+        };
+        assert_eq!(
+            value.follow_cell_path(&path.members).unwrap().into_owned(),
+            Value::test_bool(false)
+        );
     }
 }

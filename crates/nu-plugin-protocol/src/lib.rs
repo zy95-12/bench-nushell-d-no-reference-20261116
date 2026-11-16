@@ -198,9 +198,9 @@ pub enum CustomValueOp {
     /// [`to_base_value()`](nu_protocol::CustomValue::to_base_value)
     ToBaseValue,
     /// [`follow_path_int()`](nu_protocol::CustomValue::follow_path_int)
-    FollowPathInt(Spanned<usize>),
+    FollowPathInt(Spanned<usize>, bool),
     /// [`follow_path_string()`](nu_protocol::CustomValue::follow_path_string)
-    FollowPathString(Spanned<String>),
+    FollowPathString(Spanned<String>, bool, nu_protocol::casing::Casing),
     /// [`partial_cmp()`](nu_protocol::CustomValue::partial_cmp)
     PartialCmp(Value),
     /// [`operation()`](nu_protocol::CustomValue::operation)
@@ -215,8 +215,8 @@ impl CustomValueOp {
     pub fn name(&self) -> &'static str {
         match self {
             CustomValueOp::ToBaseValue => "to_base_value",
-            CustomValueOp::FollowPathInt(_) => "follow_path_int",
-            CustomValueOp::FollowPathString(_) => "follow_path_string",
+            CustomValueOp::FollowPathInt(..) => "follow_path_int",
+            CustomValueOp::FollowPathString(..) => "follow_path_string",
             CustomValueOp::PartialCmp(_) => "partial_cmp",
             CustomValueOp::Operation(_, _) => "operation",
             CustomValueOp::Dropped => "dropped",

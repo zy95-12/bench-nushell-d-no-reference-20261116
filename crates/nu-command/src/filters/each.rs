@@ -43,6 +43,11 @@ with 'transpose' first."#
                 SyntaxShape::Closure(Some(vec![SyntaxShape::Any])),
                 "The closure to run.",
             )
+            .switch(
+                "flatten",
+                "Stream the elements of each closure result",
+                Some('f'),
+            )
             .switch("keep-empty", "keep empty result cells", Some('k'))
             .allow_variants_without_examples(true)
             .category(Category::Filters)
@@ -102,18 +107,45 @@ with 'transpose' first."#
     ) -> Result<PipelineData, ShellError> {
         let head = call.head;
         let closure: Closure = call.req(engine_state, stack, 0)?;
+        let flatten = call.has_flag(engine_state, stack, "flatten")?;
         let keep_empty = call.has_flag(engine_state, stack, "keep-empty")?;
 
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
         match input {
-            PipelineData::Empty => Ok(PipelineData::Empty),
+            PipelineData::Empty | PipelineData::Value(Value::Nothing { .. }, ..) => {
+                Ok(PipelineData::Empty)
+            }
             PipelineData::Value(Value::Range { .. }, ..)
             | PipelineData::Value(Value::List { .. }, ..)
             | PipelineData::ListStream(..) => {
+                if flatten {
+                    let mut closure = ClosureEval::new(engine_state, stack, closure);
+                    return Ok(input
+                        .into_iter()
+                        .flat_map(move |value| {
+                            if value.is_error() {
+                                return value.into_pipeline_data().into_iter();
+                            }
+                            let span = value.span();
+                            closure
+                                .run_with_value(value)
+                                .unwrap_or_else(|err| Value::error(err, span).into_pipeline_data())
+                                .into_iter()
+                        })
+                        .filter(move |v| keep_empty || !v.is_nothing())
+                        .into_pipeline_data_with_metadata(
+                            head,
+                            engine_state.signals().clone(),
+                            metadata,
+                        ));
+                }
                 let mut closure = ClosureEval::new(engine_state, stack, closure);
                 Ok(input
                     .into_iter()
                     .map_while(move |value| {
+                        if value.is_error() {
+                            return Some(value);
+                        }
                         let span = value.span();
                         let is_error = value.is_error();
                         match closure.run_with_value(value) {
@@ -141,6 +173,28 @@ with 'transpose' first."#
             }
             PipelineData::ByteStream(stream, ..) => {
                 if let Some(chunks) = stream.chunks() {
+                    if flatten {
+                        let mut closure = ClosureEval::new(engine_state, stack, closure);
+                        return Ok(chunks
+                            .flat_map(move |item| {
+                                match item {
+                                    Ok(value) if value.is_error() => value.into_pipeline_data(),
+                                    Ok(value) => {
+                                        closure.run_with_value(value).unwrap_or_else(|err| {
+                                            Value::error(err, head).into_pipeline_data()
+                                        })
+                                    }
+                                    Err(err) => Value::error(err, head).into_pipeline_data(),
+                                }
+                                .into_iter()
+                            })
+                            .filter(move |v| keep_empty || !v.is_nothing())
+                            .into_pipeline_data_with_metadata(
+                                head,
+                                engine_state.signals().clone(),
+                                metadata,
+                            ));
+                    }
                     let mut closure = ClosureEval::new(engine_state, stack, closure);
                     Ok(chunks
                         .map_while(move |value| {

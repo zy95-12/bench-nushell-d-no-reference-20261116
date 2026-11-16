@@ -196,10 +196,41 @@ fn which(
     };
 
     if which_args.applications.is_empty() {
-        return Err(ShellError::MissingParameter {
-            param_name: "application".into(),
-            span: head,
-        });
+        #[allow(deprecated)]
+        let cwd = env::current_dir_str(engine_state, stack)?;
+        let paths = env::path_str(engine_state, stack, head)?;
+        let mut names = engine_state
+            .get_decls_sorted(false)
+            .into_iter()
+            .map(|(name, _)| String::from_utf8_lossy(&name).into_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+        for directory in std::env::split_paths(&paths) {
+            if let Ok(entries) = std::fs::read_dir(directory) {
+                names.extend(
+                    entries
+                        .flatten()
+                        .filter_map(|entry| entry.file_name().into_string().ok()),
+                );
+            }
+        }
+        let output = names
+            .into_iter()
+            .flat_map(|name| {
+                which_single(
+                    Spanned {
+                        item: name,
+                        span: head,
+                    },
+                    which_args.all,
+                    engine_state,
+                    &cwd,
+                    &paths,
+                )
+            })
+            .collect::<Vec<_>>();
+        return Ok(output
+            .into_iter()
+            .into_pipeline_data(head, engine_state.signals().clone()));
     }
 
     let mut output = vec![];

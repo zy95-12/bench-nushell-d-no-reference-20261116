@@ -250,6 +250,15 @@ fn detect_columns(
 
     if let Some(orig_headers) = headers {
         let mut headers = find_columns(&orig_headers);
+        let mut used = std::collections::HashSet::new();
+        for header in &mut headers {
+            let original = header.item.clone();
+            let mut suffix = 1;
+            while !used.insert(header.item.clone()) {
+                header.item = format!("{original}_{suffix}");
+                suffix += 1;
+            }
+        }
 
         if args.noheader {
             for header in headers.iter_mut().enumerate() {

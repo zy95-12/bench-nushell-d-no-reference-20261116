@@ -2,7 +2,7 @@ use super::PathSubcommandArguments;
 use nu_engine::command_prelude::*;
 use nu_path::expand_to_real_path;
 use nu_protocol::engine::StateWorkingSet;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 struct Arguments {
     path: Spanned<String>,
@@ -144,7 +144,17 @@ path."#
 fn relative_to(path: &Path, span: Span, args: &Arguments) -> Value {
     let lhs = expand_to_real_path(path);
     let rhs = expand_to_real_path(&args.path.item);
-    match lhs.strip_prefix(&rhs) {
+    let relative = lhs
+        .strip_prefix(&rhs)
+        .map(Path::to_path_buf)
+        .or_else(|error| {
+            if is_case_insensitive_filesystem() {
+                try_case_insensitive_strip_prefix(&lhs, &rhs).ok_or(error)
+            } else {
+                Err(error)
+            }
+        });
+    match relative {
         Ok(p) => Value::string(p.to_string_lossy(), span),
         Err(e) => Value::error(
             ShellError::CantConvert {
@@ -167,5 +177,55 @@ mod tests {
         use crate::test_examples;
 
         test_examples(PathRelativeTo {})
+    }
+}
+
+/// Whether the platform normally uses a case-insensitive filesystem.
+fn is_case_insensitive_filesystem() -> bool {
+    cfg!(any(windows, target_os = "macos"))
+}
+
+fn try_case_insensitive_strip_prefix(lhs: &Path, rhs: &Path) -> Option<PathBuf> {
+    let mut lhs = lhs.components();
+    for right in rhs.components() {
+        let left = lhs.next()?;
+        let equal = match (left, right) {
+            (Component::Normal(a), Component::Normal(b)) => {
+                a.to_str()?.to_lowercase() == b.to_str()?.to_lowercase()
+            }
+            _ => left == right,
+        };
+        if !equal {
+            return None;
+        }
+    }
+    Some(lhs.as_path().to_path_buf())
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+    #[test]
+    fn compare_components_without_losing_suffix_case() {
+        assert_eq!(
+            try_case_insensitive_strip_prefix(Path::new("Foo/Bar/Baz"), Path::new("foo/bar")),
+            Some(PathBuf::from("Baz"))
+        );
+        assert_eq!(
+            try_case_insensitive_strip_prefix(Path::new("Foo/Bar"), Path::new("foo/bar/baz")),
+            None
+        );
+        assert_eq!(
+            try_case_insensitive_strip_prefix(Path::new("foobar/baz"), Path::new("foo")),
+            None
+        );
+        assert_eq!(
+            try_case_insensitive_strip_prefix(Path::new("/foo/bar"), Path::new("foo")),
+            None
+        );
+        assert_eq!(
+            is_case_insensitive_filesystem(),
+            cfg!(any(windows, target_os = "macos"))
+        );
     }
 }

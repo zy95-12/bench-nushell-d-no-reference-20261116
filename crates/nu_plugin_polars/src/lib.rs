@@ -169,6 +169,7 @@ impl Plugin for PolarsPlugin {
         engine: &EngineInterface,
         custom_value: Spanned<Box<dyn CustomValue>>,
         index: Spanned<usize>,
+        _optional: bool,
     ) -> Result<Value, LabeledError> {
         let result = match CustomValueType::try_from_custom_value(custom_value.item)? {
             CustomValueType::NuDataFrame(cv) => {
@@ -201,6 +202,8 @@ impl Plugin for PolarsPlugin {
         engine: &EngineInterface,
         custom_value: Spanned<Box<dyn CustomValue>>,
         column_name: Spanned<String>,
+        _optional: bool,
+        _casing: nu_protocol::casing::Casing,
     ) -> Result<Value, LabeledError> {
         let result = match CustomValueType::try_from_custom_value(custom_value.item)? {
             CustomValueType::NuDataFrame(cv) => {

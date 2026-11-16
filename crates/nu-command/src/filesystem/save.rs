@@ -394,6 +394,7 @@ fn value_to_bytes(value: Value) -> Result<Vec<u8>, ShellError> {
             Ok(val.into_bytes())
         }
         // Propagate errors by explicitly matching them before the final case.
+        Value::Custom { val, internal_span } => value_to_bytes(val.to_base_value(internal_span)?),
         Value::Error { error, .. } => Err(*error),
         other => Ok(other.coerce_into_string()?.into_bytes()),
     }
@@ -431,7 +432,10 @@ fn open_file(
     span: Span,
     append: bool,
 ) -> Result<File, ShellError> {
-    let file: std::io::Result<File> = match (append, path.exists()) {
+    let file: std::io::Result<File> = match (
+        append,
+        path.exists() || nu_path::is_windows_device_path(path),
+    ) {
         (true, true) => std::fs::OpenOptions::new().append(true).open(path),
         _ => {
             // This is a temporary solution until `std::fs::File::create` is fixed on Windows (rust-lang/rust#134893)
@@ -577,5 +581,44 @@ fn stream_to_file(
     } else {
         copy_with_signals(source, file, span, signals)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod custom_value_tests {
+    use super::*;
+    use nu_protocol::CustomValue;
+
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    struct CustomText;
+    impl CustomValue for CustomText {
+        fn clone_value(&self, span: Span) -> Value {
+            Value::custom(Box::new(self.clone()), span)
+        }
+        fn type_name(&self) -> String {
+            "custom-text".into()
+        }
+        fn to_base_value(&self, span: Span) -> Result<Value, ShellError> {
+            Ok(Value::string("saved custom value", span))
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_mut_any(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn typetag_name(&self) -> &'static str {
+            "custom-text"
+        }
+        fn typetag_deserialize(&self) {
+            unimplemented!()
+        }
+    }
+    #[test]
+    fn custom_values_save_their_base_representation() {
+        assert_eq!(
+            value_to_bytes(Value::custom(Box::new(CustomText), Span::test_data())).unwrap(),
+            b"saved custom value"
+        );
     }
 }

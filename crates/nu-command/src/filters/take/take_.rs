@@ -46,7 +46,8 @@ impl Command for Take {
         let head = call.head;
         let rows_desired: usize = call.req(engine_state, stack, 0)?;
 
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
 
         match input {
             PipelineData::Value(val, _) => {

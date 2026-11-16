@@ -145,7 +145,7 @@ fn value_to_string(
                 let headers: Vec<String> = headers
                     .iter()
                     .map(|string| {
-                        let string = if needs_quoting(string) {
+                        let string = if needs_quoting(string) || string.contains('=') {
                             &escape_quote_string(string)
                         } else {
                             string
@@ -209,7 +209,7 @@ fn value_to_string(
         Value::Record { val, .. } => {
             let mut collection = vec![];
             for (col, val) in &**val {
-                let col = if needs_quoting(col) {
+                let col = if needs_quoting(col) || col.contains('=') {
                     &escape_quote_string(col)
                 } else {
                     col
@@ -267,7 +267,7 @@ fn value_to_string_without_quotes(
 ) -> Result<String, ShellError> {
     match v {
         Value::String { val, .. } => Ok({
-            if needs_quoting(val) {
+            if needs_quoting(val) || val.contains('=') {
                 escape_quote_string(val)
             } else {
                 val.clone()

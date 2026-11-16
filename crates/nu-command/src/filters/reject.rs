@@ -12,6 +12,11 @@ impl Command for Reject {
 
     fn signature(&self) -> Signature {
         Signature::build("reject")
+            .switch(
+                "ignore-case",
+                "Access cell paths without regard to case",
+                None,
+            )
             .input_output_types(vec![
                 (Type::record(), Type::record()),
                 (Type::table(), Type::table()),
@@ -93,6 +98,11 @@ impl Command for Reject {
 
         let optional = call.has_flag(engine_state, stack, "optional")?
             || call.has_flag(engine_state, stack, "ignore-errors")?;
+        if call.has_flag(engine_state, stack, "ignore-case")? {
+            for path in &mut new_columns {
+                path.make_insensitive();
+            }
+        }
         if optional {
             for cell_path in &mut new_columns {
                 cell_path.make_optional();
@@ -193,7 +203,8 @@ fn reject(
     cell_paths: Vec<CellPath>,
 ) -> Result<PipelineData, ShellError> {
     let mut unique_rows: HashSet<usize> = HashSet::new();
-    let metadata = input.metadata();
+    let metadata = input.metadata().map(|m| m.with_content_type(None));
+    let input = input.set_metadata(metadata.clone());
     let mut new_columns = vec![];
     let mut new_rows = vec![];
     for column in cell_paths {

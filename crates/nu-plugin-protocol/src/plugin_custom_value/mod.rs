@@ -63,6 +63,7 @@ impl CustomValue for PluginCustomValue {
         _self_span: Span,
         _index: usize,
         _path_span: Span,
+        _optional: bool,
     ) -> Result<Value, ShellError> {
         panic!("follow_path_int() not available on plugin custom value without source");
     }
@@ -72,6 +73,8 @@ impl CustomValue for PluginCustomValue {
         _self_span: Span,
         _column_name: String,
         _path_span: Span,
+        _optional: bool,
+        _casing: nu_protocol::casing::Casing,
     ) -> Result<Value, ShellError> {
         panic!("follow_path_string() not available on plugin custom value without source");
     }

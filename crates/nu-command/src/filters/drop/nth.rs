@@ -100,7 +100,8 @@ impl Command for DropNth {
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let head = call.head;
-        let metadata = input.metadata();
+        let metadata = input.metadata().map(|m| m.with_content_type(None));
+        let input = input.set_metadata(metadata.clone());
 
         let args: Vec<Value> = call.rest(engine_state, stack, 0)?;
         if args.is_empty() {
