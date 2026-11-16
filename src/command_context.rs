@@ -1,13 +1,14 @@
 use nu_protocol::engine::EngineState;
 
 pub(crate) fn get_engine_state() -> EngineState {
-    let engine_state = nu_cmd_lang::create_default_context();
-    #[cfg(feature = "plugin")]
-    let engine_state = nu_cmd_plugin::add_plugin_command_context(engine_state);
-    let engine_state = nu_command::add_shell_command_context(engine_state);
-    let engine_state = nu_cmd_extra::add_extra_command_context(engine_state);
-    let engine_state = nu_cli::add_cli_context(engine_state);
-    nu_explore::add_explore_context(engine_state)
+    nu_cmd_lang::create_default_context_with(&[
+        #[cfg(feature = "plugin")]
+        nu_cmd_plugin::add_plugin_command_context,
+        nu_command::add_shell_command_context,
+        nu_cmd_extra::add_extra_command_context,
+        nu_cli::add_cli_context,
+        nu_explore::add_explore_context,
+    ])
 }
 
 #[cfg(test)]
@@ -145,6 +146,23 @@ mod tests {
 
             if matches!(category, Category::Removed) {
                 // Deprecated/Removed commands don't have to conform
+                continue;
+            }
+
+            // Automatically generated namespaces only diagnose a missing subcommand;
+            // they do not accept or produce a successful pipeline.
+            if cmd.description() == "Namespace for subcommands." {
+                let result = cmd.run(
+                    &ctx,
+                    &mut nu_protocol::engine::Stack::new(),
+                    &nu_protocol::engine::Call::new(nu_protocol::Span::test_data()),
+                    nu_protocol::PipelineData::empty(),
+                );
+                assert!(matches!(
+                    result,
+                    Err(nu_protocol::ShellError::MissingParameter { param_name, .. })
+                        if param_name == "subcommand"
+                ));
                 continue;
             }
 

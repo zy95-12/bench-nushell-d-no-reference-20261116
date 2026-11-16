@@ -16,7 +16,7 @@ use std::{
 use tango_bench::{IntoBenchmarks, benchmark_fn, tango_benchmarks, tango_main};
 
 fn load_bench_commands() -> EngineState {
-    nu_command::add_shell_command_context(nu_cmd_lang::create_default_context())
+    nu_cmd_lang::create_default_context_with(&[nu_command::add_shell_command_context])
 }
 
 fn setup_engine() -> EngineState {

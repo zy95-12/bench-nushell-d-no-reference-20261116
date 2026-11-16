@@ -367,7 +367,7 @@ impl InterfaceManager for EngineInterfaceManager {
                         .map(|()| value)
                         .unwrap_or_else(|err| Value::error(err, span))
                 });
-                Ok(PipelineData::ListStream(stream, meta))
+                Ok(PipelineData::list_stream(stream, meta))
             }
             PipelineData::Empty | PipelineData::ByteStream(..) => Ok(data),
         }
@@ -885,7 +885,7 @@ impl EngineInterface {
         positional: Vec<Value>,
         input: Option<Value>,
     ) -> Result<Value, ShellError> {
-        let input = input.map_or_else(|| PipelineData::Empty, |v| PipelineData::Value(v, None));
+        let input = input.map_or_else(|| PipelineData::empty(), |v| PipelineData::value(v, None));
         let output = self.eval_closure_with_stream(closure, positional, input, true, false)?;
         // Unwrap an error value
         match output.into_value(closure.span)? {
@@ -1025,7 +1025,7 @@ impl Interface for EngineInterface {
                         .map(|_| value)
                         .unwrap_or_else(|err| Value::error(err, span))
                 });
-                Ok(PipelineData::ListStream(stream, meta))
+                Ok(PipelineData::list_stream(stream, meta))
             }
             PipelineData::Empty | PipelineData::ByteStream(..) => Ok(data),
         }

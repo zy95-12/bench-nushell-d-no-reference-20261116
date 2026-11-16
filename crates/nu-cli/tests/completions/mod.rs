@@ -1884,8 +1884,6 @@ fn variables_completions() {
     // Test completions for $nu
     let suggestions = completer.complete("$nu.", 4);
 
-    assert_eq!(19, suggestions.len());
-
     let expected: Vec<_> = vec![
         "cache-dir",
         "config-path",
@@ -1909,6 +1907,8 @@ fn variables_completions() {
         "user-autoload-dirs",
         "vendor-autoload-dirs",
     ];
+
+    assert_eq!(expected.len(), suggestions.len());
 
     // Match results
     match_suggestions(&expected, &suggestions);
@@ -2140,7 +2140,8 @@ fn run_external_completion_within_pwd(
     assert!(engine_state.merge_delta(delta).is_ok());
 
     assert!(
-        eval_block::<WithoutDebug>(&engine_state, &mut stack, &block, PipelineData::Empty).is_ok()
+        eval_block::<WithoutDebug>(&engine_state, &mut stack, &block, PipelineData::empty())
+            .is_ok()
     );
 
     // Merge environment into the permanent state

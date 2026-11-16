@@ -44,7 +44,7 @@ fn test_start_valid_url() {
         &engine_state,
         &mut stack,
         &call,
-        PipelineData::Empty,
+        PipelineData::empty(),
     );
 
     assert!(
@@ -70,7 +70,7 @@ fn test_start_valid_local_path() {
         &engine_state,
         &mut stack,
         &call,
-        PipelineData::Empty,
+        PipelineData::empty(),
     );
 
     // If the environment is correctly set, it should succeed.
@@ -99,7 +99,7 @@ fn test_start_nonexistent_local_path() {
         &engine_state,
         &mut stack,
         &call,
-        PipelineData::Empty,
+        PipelineData::empty(),
     );
 
     // We expect an error since the file does not exist

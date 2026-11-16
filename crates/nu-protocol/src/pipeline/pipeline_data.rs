@@ -48,8 +48,23 @@ pub enum PipelineData {
 }
 
 impl PipelineData {
-    pub fn empty() -> PipelineData {
+    pub const fn empty() -> PipelineData {
         PipelineData::Empty
+    }
+
+    /// Create pipeline data containing one value and optional metadata.
+    pub fn value(value: impl Into<Value>, metadata: impl Into<Option<PipelineMetadata>>) -> Self {
+        Self::Value(value.into(), metadata.into())
+    }
+
+    /// Create pipeline data containing a stream of values and optional metadata.
+    pub fn list_stream(stream: ListStream, metadata: impl Into<Option<PipelineMetadata>>) -> Self {
+        Self::ListStream(stream, metadata.into())
+    }
+
+    /// Create pipeline data containing a byte stream and optional metadata.
+    pub fn byte_stream(stream: ByteStream, metadata: impl Into<Option<PipelineMetadata>>) -> Self {
+        Self::ByteStream(stream, metadata.into())
     }
 
     pub fn metadata(&self) -> Option<PipelineMetadata> {
@@ -91,15 +106,15 @@ impl PipelineData {
     /// Returns `Value(Nothing)` with the given span if it was [`PipelineData::Empty`].
     pub fn with_span(self, span: Span) -> Self {
         match self {
-            PipelineData::Empty => PipelineData::Value(Value::nothing(span), None),
+            PipelineData::Empty => PipelineData::value(Value::nothing(span), None),
             PipelineData::Value(value, metadata) => {
-                PipelineData::Value(value.with_span(span), metadata)
+                PipelineData::value(value.with_span(span), metadata)
             }
             PipelineData::ListStream(stream, metadata) => {
-                PipelineData::ListStream(stream.with_span(span), metadata)
+                PipelineData::list_stream(stream.with_span(span), metadata)
             }
             PipelineData::ByteStream(stream, metadata) => {
-                PipelineData::ByteStream(stream.with_span(span), metadata)
+                PipelineData::byte_stream(stream.with_span(span), metadata)
             }
         }
     }
@@ -191,19 +206,19 @@ impl PipelineData {
             PipelineData::ListStream(..) | PipelineData::ByteStream(..) => Ok(self),
             PipelineData::Value(Value::List { .. } | Value::Range { .. }, ref metadata) => {
                 let metadata = metadata.clone();
-                Ok(PipelineData::ListStream(
+                Ok(PipelineData::list_stream(
                     ListStream::new(self.into_iter(), span, engine_state.signals().clone()),
                     metadata,
                 ))
             }
             PipelineData::Value(Value::String { val, .. }, metadata) => {
-                Ok(PipelineData::ByteStream(
+                Ok(PipelineData::byte_stream(
                     ByteStream::read_string(val, span, engine_state.signals().clone()),
                     metadata,
                 ))
             }
             PipelineData::Value(Value::Binary { val, .. }, metadata) => {
-                Ok(PipelineData::ByteStream(
+                Ok(PipelineData::byte_stream(
                     ByteStream::read_binary(val, span, engine_state.signals().clone()),
                     metadata,
                 ))
@@ -281,21 +296,21 @@ impl PipelineData {
         match stack.pipe_stdout().unwrap_or(&OutDest::Inherit) {
             OutDest::Print => {
                 self.print_table(engine_state, stack, false, false)?;
-                Ok(Self::Empty)
+                Ok(Self::empty())
             }
             OutDest::Pipe | OutDest::PipeSeparate => Ok(self),
             OutDest::Value => {
                 let metadata = self.metadata();
                 let span = self.span().unwrap_or(Span::unknown());
-                self.into_value(span).map(|val| Self::Value(val, metadata))
+                self.into_value(span).map(|val| Self::value(val, metadata))
             }
             OutDest::File(file) => {
                 self.write_to(file.as_ref())?;
-                Ok(Self::Empty)
+                Ok(Self::empty())
             }
             OutDest::Null | OutDest::Inherit => {
                 self.drain()?;
-                Ok(Self::Empty)
+                Ok(Self::empty())
             }
         }
     }
@@ -454,9 +469,9 @@ impl PipelineData {
                 };
                 Ok(pipeline.set_metadata(metadata))
             }
-            PipelineData::Empty => Ok(PipelineData::Empty),
+            PipelineData::Empty => Ok(PipelineData::empty()),
             PipelineData::ListStream(stream, metadata) => {
-                Ok(PipelineData::ListStream(stream.map(f), metadata))
+                Ok(PipelineData::list_stream(stream.map(f), metadata))
             }
             PipelineData::ByteStream(stream, metadata) => {
                 Ok(f(stream.into_value()?).into_pipeline_data_with_metadata(metadata))
@@ -473,7 +488,7 @@ impl PipelineData {
         F: FnMut(Value) -> U + 'static + Send,
     {
         match self {
-            PipelineData::Empty => Ok(PipelineData::Empty),
+            PipelineData::Empty => Ok(PipelineData::empty()),
             PipelineData::Value(value, metadata) => {
                 let span = value.span();
                 let pipeline = match value {
@@ -491,7 +506,7 @@ impl PipelineData {
                 };
                 Ok(pipeline.set_metadata(metadata))
             }
-            PipelineData::ListStream(stream, metadata) => Ok(PipelineData::ListStream(
+            PipelineData::ListStream(stream, metadata) => Ok(PipelineData::list_stream(
                 stream.modify(|iter| iter.flat_map(f)),
                 metadata,
             )),
@@ -520,7 +535,7 @@ impl PipelineData {
         F: FnMut(&Value) -> bool + 'static + Send,
     {
         match self {
-            PipelineData::Empty => Ok(PipelineData::Empty),
+            PipelineData::Empty => Ok(PipelineData::empty()),
             PipelineData::Value(value, metadata) => {
                 let span = value.span();
                 let pipeline = match value {
@@ -542,7 +557,7 @@ impl PipelineData {
                 };
                 Ok(pipeline.set_metadata(metadata))
             }
-            PipelineData::ListStream(stream, metadata) => Ok(PipelineData::ListStream(
+            PipelineData::ListStream(stream, metadata) => Ok(PipelineData::list_stream(
                 stream.modify(|iter| iter.filter(f)),
                 metadata,
             )),
@@ -602,9 +617,9 @@ impl PipelineData {
                         }
                         let range_values: Vec<Value> =
                             val.into_range_iter(span, Signals::empty()).collect();
-                        Ok(PipelineData::Value(Value::list(range_values, span), None))
+                        Ok(PipelineData::value(Value::list(range_values, span), None))
                     }
-                    x => Ok(PipelineData::Value(x, metadata)),
+                    x => Ok(PipelineData::value(x, metadata)),
                 }
             }
             _ => Ok(self),
@@ -874,14 +889,14 @@ where
     V: Into<Value>,
 {
     fn into_pipeline_data(self) -> PipelineData {
-        PipelineData::Value(self.into(), None)
+        PipelineData::value(self.into(), None)
     }
 
     fn into_pipeline_data_with_metadata(
         self,
         metadata: impl Into<Option<PipelineMetadata>>,
     ) -> PipelineData {
-        PipelineData::Value(self.into(), metadata.into())
+        PipelineData::value(self.into(), metadata.into())
     }
 }
 
@@ -911,7 +926,7 @@ where
         signals: Signals,
         metadata: impl Into<Option<PipelineMetadata>>,
     ) -> PipelineData {
-        PipelineData::ListStream(
+        PipelineData::list_stream(
             ListStream::new(self.into_iter().map(Into::into), span, signals),
             metadata.into(),
         )
