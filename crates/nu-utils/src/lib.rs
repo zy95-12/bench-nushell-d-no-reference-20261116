@@ -29,3 +29,11 @@ pub use shared_cow::SharedCow;
 
 #[cfg(unix)]
 pub use filesystem::users;
+
+mod multi_life;
+mod nu_cow;
+mod split_read;
+pub mod strings;
+pub use multi_life::MultiLife;
+pub use nu_cow::NuCow;
+pub use split_read::SplitRead;

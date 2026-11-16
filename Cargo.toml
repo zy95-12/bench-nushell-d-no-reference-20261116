@@ -152,7 +152,7 @@ rust-embed = "8.7.0"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 rustls-native-certs = "0.8"
 scopeguard = { version = "1.2.0" }
-serde = { version = "1.0" }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.97"
 serde_urlencoded = "0.7.1"
 serde_yaml = "0.9.33"
@@ -191,6 +191,8 @@ windows = "0.56"
 windows-sys = "0.48"
 winreg = "0.52"
 memchr = "2.7.4"
+byteyarn = "0.5.1"
+lean_string = "0.7.0"
 webpki-roots = "1.0"
 
 [workspace.lints.clippy]
