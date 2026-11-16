@@ -30,20 +30,22 @@ impl Command for Whoami {
         call: &Call,
         _input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
-        let output = match uu_whoami::whoami() {
-            Ok(username) => username.to_string_lossy().to_string(),
-            Err(e) => {
-                return Err(ShellError::GenericError {
-                    error: "Failed to get username".into(),
-                    msg: e.to_string(),
-                    span: Some(call.head),
-                    help: None,
-                    inner: vec![],
-                });
-            }
-        };
+        crate::uutils::with_locale("whoami", call.head, || {
+            let output = match uu_whoami::whoami() {
+                Ok(username) => username.to_string_lossy().to_string(),
+                Err(e) => {
+                    return Err(ShellError::GenericError {
+                        error: "Failed to get username".into(),
+                        msg: e.to_string(),
+                        span: Some(call.head),
+                        help: None,
+                        inner: vec![],
+                    });
+                }
+            };
 
-        Ok(Value::string(output, call.head).into_pipeline_data())
+            Ok(Value::string(output, call.head).into_pipeline_data())
+        })
     }
 
     fn examples(&self) -> Vec<Example> {

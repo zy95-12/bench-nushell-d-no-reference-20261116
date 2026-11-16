@@ -100,26 +100,28 @@ impl Command for Mktemp {
             dry_run: false,
             quiet: false,
             suffix,
-            template,
+            template: template.into(),
             tmpdir,
             treat_as_template: true,
         };
 
-        let res = match uu_mktemp::mktemp(&options) {
-            Ok(res) => res
-                .into_os_string()
-                .into_string()
-                .map_err(|_| ShellError::NonUtf8 { span })?,
-            Err(e) => {
-                return Err(ShellError::GenericError {
-                    error: format!("{e}"),
-                    msg: format!("{e}"),
-                    span: None,
-                    help: None,
-                    inner: vec![],
-                });
-            }
-        };
-        Ok(PipelineData::Value(Value::string(res, span), None))
+        crate::uutils::with_locale("mktemp", call.head, || {
+            let res = match uu_mktemp::mktemp(&options) {
+                Ok(res) => res
+                    .into_os_string()
+                    .into_string()
+                    .map_err(|_| ShellError::NonUtf8 { span })?,
+                Err(e) => {
+                    return Err(ShellError::GenericError {
+                        error: format!("{e}"),
+                        msg: format!("{e}"),
+                        span: None,
+                        help: None,
+                        inner: vec![],
+                    });
+                }
+            };
+            Ok(PipelineData::Value(Value::string(res, span), None))
+        })
     }
 }

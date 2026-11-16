@@ -149,11 +149,11 @@ fn helper(
     signals: &Signals,
 ) -> Result<PipelineData, ShellError> {
     let span = args.url.span();
-    let (requested_url, _) = http_parse_url(call, span, args.url)?;
+    let (requested_url, url) = http_parse_url(call, span, args.url)?;
     let redirect_mode = http_parse_redirect_mode(args.redirect)?;
 
     let client = http_client(args.insecure, redirect_mode, engine_state, stack)?;
-    let mut request = client.head(&requested_url);
+    let mut request = client.head(url.as_str()).force_send_body();
 
     request = request_set_timeout(args.timeout, request)?;
     request = request_add_authorization_header(args.user, args.password, request);
@@ -168,7 +168,7 @@ fn helper(
         signals,
     );
     check_response_redirection(redirect_mode, span, &response)?;
-    request_handle_response_headers(span, response)
+    request_handle_response_headers(span, &requested_url, response)
 }
 
 #[cfg(test)]

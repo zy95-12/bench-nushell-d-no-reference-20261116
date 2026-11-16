@@ -1,8 +1,8 @@
-Provide a [`TlsConnector`] for [`ureq`].
+Provide a [`ureq::tls::TlsConfig`] for [`ureq`].
 
 This is used by Nushell's networking commands (`http`) to handle secure 
 (or optionally insecure) HTTP connections.
-The returned connector enables `ureq` to perform HTTPS requests. 
+The returned configuration enables `ureq` to perform HTTPS requests.
 If `allow_insecure` is set to `true`, certificate verification is disabled.
 
 This function is only available when the `network` feature is enabled,

@@ -172,3 +172,14 @@ fn mkdir_with_tilde() {
         assert!(files_exist_at(&["~tilde2"], dirs.test()));
     })
 }
+
+#[test]
+fn utility_messages_survive_multiple_commands_in_one_shell() {
+    Playground::setup("uutils_localizers", |dirs, _| {
+        let actual =
+            nu!(cwd: dirs.test(), "touch source; cp source target; mkdir --verbose created");
+        assert!(actual.err.is_empty(), "{}", actual.err);
+        assert!(actual.out.contains("created"), "{}", actual.out);
+        assert!(!actual.out.contains("mkdir-verbose"), "{}", actual.out);
+    });
+}

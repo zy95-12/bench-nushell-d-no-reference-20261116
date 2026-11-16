@@ -200,51 +200,54 @@ impl Command for UTouch {
             }
         }
 
-        if let Err(err) = uu_touch::touch(
-            &input_files,
-            &Options {
-                no_create,
-                no_deref,
-                source,
-                date: date_str,
-                change_times,
-                strict: true,
-            },
-        ) {
-            let nu_err = match err {
-                TouchError::TouchFileError { path, index, error } => ShellError::GenericError {
-                    error: format!("Could not touch {}", path.display()),
-                    msg: error.to_string(),
-                    span: Some(file_globs[index].span),
-                    help: None,
-                    inner: Vec::new(),
+        crate::uutils::with_locale("touch", call.head, || {
+            if let Err(err) = uu_touch::touch(
+                &input_files,
+                &Options {
+                    no_create,
+                    no_deref,
+                    source,
+                    date: date_str,
+                    change_times,
+                    strict: true,
                 },
-                TouchError::InvalidDateFormat(date) => ShellError::IncorrectValue {
-                    msg: format!("Invalid date: {date}"),
-                    val_span: date_span.expect("touch should've been given a date"),
-                    call_span: call.head,
-                },
-                TouchError::ReferenceFileInaccessible(reference_path, io_err) => {
-                    let span = reference_span.expect("touch should've been given a reference file");
-                    ShellError::Io(IoError::new_with_additional_context(
-                        io_err,
-                        span,
-                        reference_path,
-                        "failed to read metadata",
-                    ))
-                }
-                _ => ShellError::GenericError {
-                    error: err.to_string(),
-                    msg: err.to_string(),
-                    span: Some(call.head),
-                    help: None,
-                    inner: Vec::new(),
-                },
-            };
-            return Err(nu_err);
-        }
+            ) {
+                let nu_err = match err {
+                    TouchError::TouchFileError { path, index, error } => ShellError::GenericError {
+                        error: format!("Could not touch {}", path.display()),
+                        msg: error.to_string(),
+                        span: Some(file_globs[index].span),
+                        help: None,
+                        inner: Vec::new(),
+                    },
+                    TouchError::InvalidDateFormat(date) => ShellError::IncorrectValue {
+                        msg: format!("Invalid date: {date}"),
+                        val_span: date_span.expect("touch should've been given a date"),
+                        call_span: call.head,
+                    },
+                    TouchError::ReferenceFileInaccessible(reference_path, io_err) => {
+                        let span =
+                            reference_span.expect("touch should've been given a reference file");
+                        ShellError::Io(IoError::new_with_additional_context(
+                            io_err,
+                            span,
+                            reference_path,
+                            "failed to read metadata",
+                        ))
+                    }
+                    _ => ShellError::GenericError {
+                        error: err.to_string(),
+                        msg: err.to_string(),
+                        span: Some(call.head),
+                        help: None,
+                        inner: Vec::new(),
+                    },
+                };
+                return Err(nu_err);
+            }
 
-        Ok(PipelineData::empty())
+            Ok(PipelineData::empty())
+        })
     }
 
     fn examples(&self) -> Vec<Example> {

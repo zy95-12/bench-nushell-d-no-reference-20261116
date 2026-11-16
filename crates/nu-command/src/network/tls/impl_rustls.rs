@@ -1,17 +1,10 @@
-use std::{
-    ops::Deref,
-    sync::{Arc, LazyLock, OnceLock},
-};
+use std::sync::{Arc, LazyLock, OnceLock};
 
+#[cfg(feature = "os")]
 use nu_engine::command_prelude::IoError;
 use nu_protocol::ShellError;
-use rustls::{
-    DigitallySignedStruct, RootCertStore, SignatureScheme,
-    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-    crypto::CryptoProvider,
-    pki_types::{CertificateDer, ServerName, UnixTime},
-};
-use ureq::TlsConnector;
+use rustls::crypto::CryptoProvider;
+use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 
 // TODO: replace all these generic errors with proper errors
 
@@ -104,8 +97,8 @@ impl NuCryptoProvider {
 }
 
 #[cfg(feature = "os")]
-static ROOT_CERT_STORE: LazyLock<Result<Arc<RootCertStore>, ShellError>> = LazyLock::new(|| {
-    let mut roots = RootCertStore::empty();
+static ROOT_CERT_STORE: LazyLock<Result<RootCerts, ShellError>> = LazyLock::new(|| {
+    let mut roots = Vec::new();
 
     let native_certs = rustls_native_certs::load_native_certs();
 
@@ -149,103 +142,107 @@ static ROOT_CERT_STORE: LazyLock<Result<Arc<RootCertStore>, ShellError>> = LazyL
         });
     }
 
+    // Validate every native certificate as before instead of silently ignoring malformed roots.
+    let mut store = rustls::RootCertStore::empty();
     for cert in native_certs.certs {
-        roots.add(cert).map_err(|err| ShellError::GenericError {
-            error: err.to_string(),
-            msg: String::from("could not add root cert"),
-            span: None,
-            help: None,
-            inner: vec![],
-        })?;
+        store
+            .add(cert.clone())
+            .map_err(|err| ShellError::GenericError {
+                error: err.to_string(),
+                msg: String::from("could not add root cert"),
+                span: None,
+                help: None,
+                inner: vec![],
+            })?;
+        roots.push(ureq::tls::Certificate::from_der(cert.as_ref()).to_owned());
     }
 
-    Ok(Arc::new(roots))
+    Ok(roots.into())
 });
 
 #[cfg(not(feature = "os"))]
-static ROOT_CERT_STORE: LazyLock<Result<Arc<RootCertStore>, ShellError>> = LazyLock::new(|| {
-    Ok(Arc::new(rustls::RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    }))
-});
+static ROOT_CERT_STORE: LazyLock<Result<RootCerts, ShellError>> =
+    LazyLock::new(|| Ok(RootCerts::WebPki));
 
 #[doc = include_str!("./tls.rustdoc.md")]
-pub fn tls(allow_insecure: bool) -> Result<impl TlsConnector, ShellError> {
-    let crypto_provider = CRYPTO_PROVIDER.get()?;
-
-    let make_protocol_versions_error = |err: rustls::Error| ShellError::GenericError {
-        error: err.to_string(),
-        msg: "crypto provider is incompatible with protocol versions".to_string(),
-        span: None,
-        help: None,
-        inner: vec![],
-    };
-
-    let client_config = match allow_insecure {
-        false => rustls::ClientConfig::builder_with_provider(crypto_provider)
-            .with_safe_default_protocol_versions()
-            .map_err(make_protocol_versions_error)?
-            .with_root_certificates(ROOT_CERT_STORE.deref().clone()?)
-            .with_no_client_auth(),
-        true => rustls::ClientConfig::builder_with_provider(crypto_provider)
-            .with_safe_default_protocol_versions()
-            .map_err(make_protocol_versions_error)?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(UnsecureServerCertVerifier))
-            .with_no_client_auth(),
-    };
-
-    Ok(Arc::new(client_config))
+pub fn tls(allow_insecure: bool) -> Result<TlsConfig, ShellError> {
+    Ok(TlsConfig::builder()
+        .provider(TlsProvider::Rustls)
+        .unversioned_rustls_crypto_provider(CRYPTO_PROVIDER.get()?)
+        .root_certs(if allow_insecure {
+            RootCerts::WebPki
+        } else {
+            ROOT_CERT_STORE.clone()?
+        })
+        .disable_verification(allow_insecure)
+        .build())
 }
 
-#[derive(Debug)]
-struct UnsecureServerCertVerifier;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+    };
 
-impl ServerCertVerifier for UnsecureServerCertVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        vec![
-            SignatureScheme::RSA_PKCS1_SHA1,
-            SignatureScheme::ECDSA_SHA1_Legacy,
-            SignatureScheme::RSA_PKCS1_SHA256,
-            SignatureScheme::ECDSA_NISTP256_SHA256,
-            SignatureScheme::RSA_PKCS1_SHA384,
-            SignatureScheme::ECDSA_NISTP384_SHA384,
-            SignatureScheme::RSA_PKCS1_SHA512,
-            SignatureScheme::ECDSA_NISTP521_SHA512,
-            SignatureScheme::RSA_PSS_SHA256,
-            SignatureScheme::RSA_PSS_SHA384,
-            SignatureScheme::RSA_PSS_SHA512,
-            SignatureScheme::ED25519,
-            SignatureScheme::ED448,
-        ]
+    // Self-signed localhost certificate generated for these tests only; never a trusted root.
+    #[test]
+    fn self_signed_certificate_requires_insecure_mode() {
+        CRYPTO_PROVIDER.default();
+        for insecure in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let certificate = rustls::pki_types::CertificateDer::from(
+                    include_bytes!("test_assets/localhost.der").to_vec(),
+                );
+                let key = rustls::pki_types::PrivatePkcs8KeyDer::from(
+                    include_bytes!("test_assets/localhost-key.der").to_vec(),
+                );
+                let config =
+                    rustls::ServerConfig::builder_with_provider(CRYPTO_PROVIDER.get().unwrap())
+                        .with_safe_default_protocol_versions()
+                        .unwrap()
+                        .with_no_client_auth()
+                        .with_single_cert(vec![certificate], key.into())
+                        .unwrap();
+                let (socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let connection = rustls::ServerConnection::new(Arc::new(config)).unwrap();
+                let mut stream = rustls::StreamOwned::new(connection, socket);
+                let mut buf = [0; 4096];
+                // A failed handshake is expected for the verified request.
+                if stream.read(&mut buf).is_ok() {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ntrusted",
+                    );
+                    let _ = stream.flush();
+                }
+            });
+            let result = ureq::Agent::config_builder()
+                .tls_config(tls(insecure).unwrap())
+                .proxy(None)
+                .timeout_global(Some(std::time::Duration::from_secs(5)))
+                .build()
+                .new_agent()
+                .get(format!("https://{address}/"))
+                .call();
+            if insecure {
+                assert_eq!(
+                    result.unwrap().body_mut().read_to_string().unwrap(),
+                    "trusted"
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    format!("{error:?}").contains("InvalidCertificate"),
+                    "{error:?}"
+                );
+            }
+            server.join().unwrap();
+        }
     }
 }

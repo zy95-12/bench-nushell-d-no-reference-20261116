@@ -110,7 +110,6 @@ toml = { workspace = true, features = ["preserve_order"] }
 unicode-segmentation = { workspace = true }
 update-informer = { workspace = true, optional = true }
 ureq = { workspace = true, default-features = false, features = [
-	"charset",
 	"gzip",
 	"json",
 ], optional = true }
@@ -219,8 +218,8 @@ rustls-tls = [
 	"dep:rustls",
 	"dep:rustls-native-certs",
 	"dep:webpki-roots",
-	"update-informer/rustls-tls",
-	"ureq/tls", # ureq 3 will has the feature rustls instead
+	"update-informer/rustls",
+	"ureq/rustls-no-provider",
 ]
 
 plugin = ["nu-parser/plugin", "os"]
