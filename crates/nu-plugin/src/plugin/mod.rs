@@ -609,7 +609,7 @@ fn custom_value_op(
         CustomValueOp::ToBaseValue => {
             let result = plugin
                 .custom_value_to_base_value(engine, local_value)
-                .map(|value| PipelineData::Value(value, None));
+                .map(|value| PipelineData::value(value, None));
             engine
                 .write_response(result)
                 .and_then(|writer| writer.write())
@@ -617,7 +617,7 @@ fn custom_value_op(
         CustomValueOp::FollowPathInt(index, optional) => {
             let result = plugin
                 .custom_value_follow_path_int(engine, local_value, index, optional)
-                .map(|value| PipelineData::Value(value, None));
+                .map(|value| PipelineData::value(value, None));
             engine
                 .write_response(result)
                 .and_then(|writer| writer.write())
@@ -625,7 +625,7 @@ fn custom_value_op(
         CustomValueOp::FollowPathString(column_name, optional, casing) => {
             let result = plugin
                 .custom_value_follow_path_string(engine, local_value, column_name, optional, casing)
-                .map(|value| PipelineData::Value(value, None));
+                .map(|value| PipelineData::value(value, None));
             engine
                 .write_response(result)
                 .and_then(|writer| writer.write())
@@ -643,7 +643,7 @@ fn custom_value_op(
             PluginCustomValue::deserialize_custom_values_in(&mut right)?;
             let result = plugin
                 .custom_value_operation(engine, local_value, operator, right)
-                .map(|value| PipelineData::Value(value, None));
+                .map(|value| PipelineData::value(value, None));
             engine
                 .write_response(result)
                 .and_then(|writer| writer.write())
@@ -651,7 +651,7 @@ fn custom_value_op(
         CustomValueOp::Dropped => {
             let result = plugin
                 .custom_value_dropped(engine, local_value.item)
-                .map(|_| PipelineData::Empty);
+                .map(|_| PipelineData::empty());
             engine
                 .write_response(result)
                 .and_then(|writer| writer.write())

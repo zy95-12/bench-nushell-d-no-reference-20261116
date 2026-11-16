@@ -466,8 +466,8 @@ mod tests {
         nu_config_code: Option<&str>,
         params: Option<serde_json::Value>,
     ) -> (Connection, Receiver<Result<()>>) {
-        let engine_state = nu_cmd_lang::create_default_context();
-        let mut engine_state = nu_command::add_shell_command_context(engine_state);
+        let mut engine_state =
+            nu_cmd_lang::create_default_context_with(&[nu_command::add_shell_command_context]);
         engine_state.generate_nu_constant();
         assert!(load_standard_library(&mut engine_state).is_ok());
         let cwd = std::env::current_dir().expect("Could not get current working directory.");
@@ -531,7 +531,7 @@ mod tests {
                 engine_state,
                 stack,
                 &block,
-                PipelineData::Value(Value::nothing(Span::unknown()), None),
+                PipelineData::value(Value::nothing(Span::unknown()), None),
             )
             .is_ok()
         );

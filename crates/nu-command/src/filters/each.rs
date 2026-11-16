@@ -113,7 +113,7 @@ with 'transpose' first."#
         let metadata = input.metadata().map(|m| m.with_content_type(None));
         match input {
             PipelineData::Empty | PipelineData::Value(Value::Nothing { .. }, ..) => {
-                Ok(PipelineData::Empty)
+                Ok(PipelineData::empty())
             }
             PipelineData::Value(Value::Range { .. }, ..)
             | PipelineData::Value(Value::List { .. }, ..)
@@ -218,7 +218,7 @@ with 'transpose' first."#
                         })
                         .into_pipeline_data(head, engine_state.signals().clone()))
                 } else {
-                    Ok(PipelineData::Empty)
+                    Ok(PipelineData::empty())
                 }
             }
             // This match allows non-iterables to be accepted,
