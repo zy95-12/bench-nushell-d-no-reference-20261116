@@ -44,45 +44,48 @@ impl Command for UName {
             hardware_platform: false,
             os: false,
         };
-        let output = uu_uname::UNameOutput::new(&opts).map_err(|e| ShellError::GenericError {
-            error: format!("{e}"),
-            msg: format!("{e}"),
-            span: None,
-            help: None,
-            inner: Vec::new(),
-        })?;
-        let outputs = [
-            output.kernel_name,
-            output.nodename,
-            output.kernel_release,
-            output.kernel_version,
-            output.machine,
-            output.os,
-        ];
-        let outputs = outputs
-            .iter()
-            .map(|name| {
-                Ok(name
-                    .as_ref()
-                    .ok_or("unknown")
-                    .map_err(|_| ShellError::NotFound { span })?
-                    .to_string())
-            })
-            .collect::<Result<Vec<String>, ShellError>>()?;
-        Ok(PipelineData::Value(
-            Value::record(
-                record! {
-                    "kernel-name" => Value::string(outputs[0].clone(), span),
-                    "nodename" => Value::string(outputs[1].clone(), span),
-                    "kernel-release" => Value::string(outputs[2].clone(), span),
-                    "kernel-version" => Value::string(outputs[3].clone(), span),
-                    "machine" => Value::string(outputs[4].clone(), span),
-                    "operating-system" => Value::string(outputs[5].clone(), span),
-                },
-                span,
-            ),
-            None,
-        ))
+        crate::uutils::with_locale("uname", call.head, || {
+            let output =
+                uu_uname::UNameOutput::new(&opts).map_err(|e| ShellError::GenericError {
+                    error: format!("{e}"),
+                    msg: format!("{e}"),
+                    span: None,
+                    help: None,
+                    inner: Vec::new(),
+                })?;
+            let outputs = [
+                output.kernel_name,
+                output.nodename,
+                output.kernel_release,
+                output.kernel_version,
+                output.machine,
+                output.os,
+            ];
+            let outputs = outputs
+                .iter()
+                .map(|name| {
+                    Ok(name
+                        .as_ref()
+                        .ok_or("unknown")
+                        .map_err(|_| ShellError::NotFound { span })?
+                        .to_string())
+                })
+                .collect::<Result<Vec<String>, ShellError>>()?;
+            Ok(PipelineData::Value(
+                Value::record(
+                    record! {
+                        "kernel-name" => Value::string(outputs[0].clone(), span),
+                        "nodename" => Value::string(outputs[1].clone(), span),
+                        "kernel-release" => Value::string(outputs[2].clone(), span),
+                        "kernel-version" => Value::string(outputs[3].clone(), span),
+                        "machine" => Value::string(outputs[4].clone(), span),
+                        "operating-system" => Value::string(outputs[5].clone(), span),
+                    },
+                    span,
+                ),
+                None,
+            ))
+        })
     }
 
     fn examples(&self) -> Vec<Example> {

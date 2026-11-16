@@ -337,3 +337,90 @@ fn http_get_timeout() {
     assert!(&actual.err.contains("nu::shell::io::timed_out"));
     assert!(&actual.err.contains("Timed out"));
 }
+
+#[test]
+fn http_get_custom_authorization_replaces_basic_authorization() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/")
+        .match_header("authorization", "Bearer custom")
+        .with_body("authorized")
+        .create();
+    let actual = nu!(format!(
+        "http get --user user --password password --headers {{Authorization: 'Bearer custom'}} {}",
+        server.url()
+    ));
+    assert_eq!(actual.out, "authorized", "{}", actual.err);
+    mock.assert();
+}
+
+#[test]
+fn http_get_keeps_repeated_response_headers() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/")
+        .with_header("set-cookie", "first=1")
+        .with_header("set-cookie", "second=2")
+        .create();
+    let actual = nu!(format!(
+        "http get --full {} | get headers.response | where name == set-cookie | get value | to json --raw",
+        server.url()
+    ));
+    assert_eq!(actual.out, r#"["first=1","second=2"]"#, "{}", actual.err);
+    mock.assert();
+}
+
+#[test]
+fn http_get_stops_on_fifth_redirect() {
+    let mut server = Server::new();
+    let mut mocks = Vec::new();
+    for index in 0..5 {
+        mocks.push(
+            server
+                .mock("GET", format!("/{index}").as_str())
+                .with_status(302)
+                .with_header("location", format!("/{}", index + 1).as_str())
+                .create(),
+        );
+    }
+    let destination = server.mock("GET", "/5").expect(0).create();
+    let actual = nu!(format!("http get {}/0", server.url()));
+    assert!(actual.err.contains("network_failure"), "{}", actual.err);
+    assert!(
+        actual.err.to_lowercase().contains("redirect"),
+        "{}",
+        actual.err
+    );
+    for mock in mocks {
+        mock.assert();
+    }
+    destination.assert();
+}
+
+#[test]
+fn http_get_raw_keeps_original_charset_bytes() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/")
+        .with_header("content-type", "text/plain; charset=iso-8859-1")
+        .with_body([0xe9])
+        .create();
+    let actual = nu!(format!(
+        "http get --raw {} | into binary | encode hex",
+        server.url()
+    ));
+    assert_eq!(actual.out, "E9", "{}", actual.err);
+    mock.assert();
+}
+
+#[test]
+fn http_get_encodes_unicode_path() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/caf%C3%A9")
+        .with_body("encoded")
+        .create();
+    let actual = nu!(format!("http get {}/café", server.url()));
+    assert_eq!(actual.out, "encoded", "{}", actual.err);
+    mock.assert();
+}

@@ -151,18 +151,19 @@ fn helper(
     args: Arguments,
 ) -> Result<PipelineData, ShellError> {
     let span = args.url.span();
-    let (requested_url, _) = http_parse_url(call, span, args.url)?;
+    let (requested_url, url) = http_parse_url(call, span, args.url)?;
 
     let client = http_client(args.insecure, RedirectMode::Follow, engine_state, stack)?;
-    let mut request = client.request("OPTIONS", &requested_url);
+    let mut request = client.options(url.as_str()).force_send_body();
 
     request = request_set_timeout(args.timeout, request)?;
     request = request_add_authorization_header(args.user, args.password, request);
     request = request_add_custom_headers(args.headers, request)?;
 
+    let request_headers = request.headers_ref().cloned().unwrap_or_default();
     let response = send_request(
         engine_state,
-        request.clone(),
+        request,
         HttpBody::None,
         None,
         call.head,
@@ -185,7 +186,7 @@ fn helper(
         &requested_url,
         request_flags,
         response,
-        request,
+        request_headers,
     )
 }
 

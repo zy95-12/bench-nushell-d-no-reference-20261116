@@ -95,9 +95,9 @@ impl Command for UMv {
             uu_mv::OverwriteMode::Force
         };
         let update = if call.has_flag(engine_state, stack, "update")? {
-            UpdateMode::ReplaceIfOlder
+            UpdateMode::IfOlder
         } else {
-            UpdateMode::ReplaceAll
+            UpdateMode::All
         };
 
         #[allow(deprecated)]
@@ -186,22 +186,25 @@ impl Command for UMv {
             progress_bar: progress,
             verbose,
             suffix: String::from("~"),
-            backup: BackupMode::NoBackup,
+            backup: BackupMode::None,
             update,
             target_dir: None,
             no_target_dir: false,
             strip_slashes: false,
             debug: false,
+            context: None,
         };
-        if let Err(error) = uu_mv::mv(&files, &options) {
-            return Err(ShellError::GenericError {
-                error: format!("{error}"),
-                msg: format!("{error}"),
-                span: None,
-                help: None,
-                inner: Vec::new(),
-            });
-        }
-        Ok(PipelineData::empty())
+        crate::uutils::with_locale("mv", call.head, || {
+            if let Err(error) = uu_mv::mv(&files, &options) {
+                return Err(ShellError::GenericError {
+                    error: format!("{error}"),
+                    msg: format!("{error}"),
+                    span: None,
+                    help: None,
+                    inner: Vec::new(),
+                });
+            }
+            Ok(PipelineData::empty())
+        })
     }
 }

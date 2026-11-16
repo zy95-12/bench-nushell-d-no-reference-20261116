@@ -303,3 +303,20 @@ fn http_post_timeout() {
     assert!(&actual.err.contains("nu::shell::io::timed_out"));
     assert!(&actual.err.contains("Timed out"));
 }
+
+#[test]
+fn http_post_retains_307_response_without_replaying_body() {
+    let mut server = Server::new();
+    let source = server
+        .mock("POST", "/source")
+        .match_body("payload")
+        .with_status(307)
+        .with_header("location", "/destination")
+        .with_body("not replayed")
+        .create();
+    let destination = server.mock("POST", "/destination").expect(0).create();
+    let actual = nu!(format!("http post --raw {}/source payload", server.url()));
+    assert_eq!(actual.out, "not replayed", "{}", actual.err);
+    source.assert();
+    destination.assert();
+}

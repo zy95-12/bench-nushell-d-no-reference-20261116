@@ -7,8 +7,7 @@ use nu_protocol::{
     shell_error::io::IoError,
 };
 use rusqlite::{
-    Connection, DatabaseName, Error as SqliteError, OpenFlags, Row, Statement, ToSql,
-    types::ValueRef,
+    Connection, Error as SqliteError, OpenFlags, Row, Statement, ToSql, types::ValueRef,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -183,7 +182,7 @@ impl SQLiteDatabase {
         conn: &Connection,
         filename: String,
     ) -> Result<(), SqliteError> {
-        conn.backup(DatabaseName::Main, Path::new(&filename), None)?;
+        conn.backup("main", Path::new(&filename), None)?;
         Ok(())
     }
 
@@ -193,7 +192,7 @@ impl SQLiteDatabase {
         filename: String,
     ) -> Result<(), SqliteError> {
         conn.restore(
-            DatabaseName::Main,
+            "main",
             Path::new(&filename),
             Some(|p: rusqlite::backup::Progress| {
                 let percent = if p.pagecount == 0 {
@@ -754,6 +753,35 @@ pub fn open_connection_in_memory() -> Result<Connection, ShellError> {
 mod test {
     use super::*;
     use nu_protocol::record;
+
+    #[test]
+    fn backup_and_restore_preserve_main_database() {
+        let temp = tempfile::tempdir().unwrap();
+        let filename = temp
+            .path()
+            .join("backup.sqlite")
+            .to_string_lossy()
+            .into_owned();
+        let database = SQLiteDatabase::new(temp.path(), Signals::empty());
+        let source = Connection::open_in_memory().unwrap();
+        source
+            .execute_batch("CREATE TABLE saved (value TEXT); INSERT INTO saved VALUES ('original')")
+            .unwrap();
+        database
+            .backup_database_to_file(&source, filename.clone())
+            .unwrap();
+        source
+            .execute("UPDATE saved SET value = 'changed'", [])
+            .unwrap();
+        let mut restored = Connection::open_in_memory().unwrap();
+        database
+            .restore_database_from_file(&mut restored, filename)
+            .unwrap();
+        let value: String = restored
+            .query_row("SELECT value FROM saved", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "original");
+    }
 
     #[test]
     fn can_read_empty_db() {

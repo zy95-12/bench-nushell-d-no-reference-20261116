@@ -3,7 +3,7 @@
 //! This module is available when the `network` feature is enabled. It requires
 //! either the `native-tls` or `rustls-tls` feature to be selected.
 //!
-//! See [`tls`] for how to get a TLS connector.
+//! See [`tls`] for how to get a TLS configuration.
 
 #[cfg(feature = "native-tls")]
 #[path = "impl_native_tls.rs"]

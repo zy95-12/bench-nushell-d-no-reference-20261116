@@ -74,19 +74,30 @@ impl Command for UMkdir {
             });
         }
 
-        for dir in directories {
-            if let Err(error) = mkdir(&dir, IS_RECURSIVE, get_mode(), is_verbose) {
-                return Err(ShellError::GenericError {
-                    error: format!("{error}"),
-                    msg: format!("{error}"),
-                    span: None,
-                    help: None,
-                    inner: vec![],
-                });
+        crate::uutils::with_locale("mkdir", call.head, || {
+            for dir in directories {
+                if let Err(error) = mkdir(
+                    &dir,
+                    &uu_mkdir::Config {
+                        recursive: IS_RECURSIVE,
+                        mode: get_mode(),
+                        verbose: is_verbose,
+                        set_selinux_context: false,
+                        context: None,
+                    },
+                ) {
+                    return Err(ShellError::GenericError {
+                        error: format!("{error}"),
+                        msg: format!("{error}"),
+                        span: None,
+                        help: None,
+                        inner: vec![],
+                    });
+                }
             }
-        }
 
-        Ok(PipelineData::empty())
+            Ok(PipelineData::empty())
+        })
     }
 
     fn examples(&self) -> Vec<Example> {

@@ -75,3 +75,6 @@ mod database;
 
 #[cfg(feature = "sqlite")]
 pub use database::*;
+
+#[cfg(feature = "os")]
+mod uutils;
