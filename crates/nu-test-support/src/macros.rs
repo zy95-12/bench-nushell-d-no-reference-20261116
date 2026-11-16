@@ -244,6 +244,7 @@ use tempfile::tempdir;
 
 #[derive(Default)]
 pub struct NuOpts {
+    pub experimental: Option<Vec<String>>,
     pub cwd: Option<AbsolutePathBuf>,
     pub locale: Option<String>,
     pub envs: Option<Vec<(String, String)>>,
@@ -289,6 +290,10 @@ pub fn nu_run_test(opts: NuOpts, commands: impl AsRef<str>, with_std: bool) -> O
         // the shell is started as logging shell (which it is not in this case).
         None => command.arg("--no-config-file"),
     };
+
+    if let Some(options) = opts.experimental {
+        command.arg(format!("--experimental-options=[{}]", options.join(",")));
+    }
 
     if !with_std {
         command.arg("--no-std-lib");

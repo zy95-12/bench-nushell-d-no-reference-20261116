@@ -73,6 +73,7 @@ impl Type {
 
         match (self, other) {
             (t, u) if t == u => true,
+            (Type::String, Type::Glob) | (Type::Glob, Type::String) => true,
             (Type::Float, Type::Number) => true,
             (Type::Int, Type::Number) => true,
             (_, Type::Any) => true,

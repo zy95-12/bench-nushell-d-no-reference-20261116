@@ -338,7 +338,7 @@ pub(crate) fn compile_let(
             var_id,
             src: io_reg,
         }
-        .into_spanned(call.head),
+        .into_spanned(block_arg.span),
     )?;
     builder.add_comment("let");
 

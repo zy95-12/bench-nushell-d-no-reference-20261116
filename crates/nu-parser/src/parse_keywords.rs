@@ -186,6 +186,16 @@ pub fn parse_def_predecl(working_set: &mut StateWorkingSet, spans: &[Span]) {
         return;
     };
 
+    if name == "def" {
+        working_set.error(ParseError::LabeledErrorWithHelp {
+            error: "Cannot redefine the builtin def keyword".into(),
+            label: "this name is reserved for command definitions".into(),
+            span: spans[name_pos],
+            help: "Choose a different command name".into(),
+        });
+        return;
+    }
+
     if name.contains('#')
         || name.contains('^')
         || name.parse::<bytesize::ByteSize>().is_ok()
@@ -248,6 +258,36 @@ pub fn parse_def_predecl(working_set: &mut StateWorkingSet, spans: &[Span]) {
 
     if working_set.add_predecl(decl).is_some() {
         working_set.error(ParseError::DuplicateCommandDef(spans[name_pos]));
+    }
+}
+
+/// Element type of a for-loop iterable, including the numeric kind of a range.
+pub(crate) fn iteration_type(expr: &Expression) -> Type {
+    if let Expr::Keyword(keyword) = &expr.expr {
+        return iteration_type(&keyword.expr);
+    }
+    match &expr.ty {
+        Type::List(ty) => *ty.clone(),
+        Type::Table(columns) => Type::Record(columns.clone()),
+        Type::Range => {
+            if let Expr::Range(range) = &expr.expr {
+                let types = [&range.from, &range.next, &range.to]
+                    .into_iter()
+                    .flatten()
+                    .map(|e| &e.ty)
+                    .collect::<Vec<_>>();
+                if types.iter().any(|ty| **ty == Type::Float) {
+                    Type::Float
+                } else if types.iter().all(|ty| **ty == Type::Int) {
+                    Type::Int
+                } else {
+                    Type::Number
+                }
+            } else {
+                Type::Number
+            }
+        }
+        ty => ty.clone(),
     }
 }
 
@@ -328,14 +368,7 @@ pub fn parse_for(working_set: &mut StateWorkingSet, lite_command: &LiteCommand) 
     let iteration_expr = call.positional_nth(1).expect("for call already checked");
     let block = call.positional_nth(2).expect("for call already checked");
 
-    let iteration_expr_ty = iteration_expr.ty.clone();
-
-    // Figure out the type of the variable the `for` uses for iteration
-    let var_type = match iteration_expr_ty {
-        Type::List(x) => *x,
-        Type::Table(x) => Type::Record(x),
-        x => x,
-    };
+    let var_type = iteration_type(iteration_expr);
 
     if let (Some(var_id), Some(block_id)) = (&var_decl.as_var(), block.as_block()) {
         working_set.set_variable_type(*var_id, var_type.clone());

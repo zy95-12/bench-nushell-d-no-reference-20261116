@@ -253,6 +253,12 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
         .any(|b| matches!(b, b'"' | b'\'' | b'(' | b')' | b'`'))
     {
         enum State {
+            Paren {
+                from: usize,
+                depth: usize,
+                quote: Option<u8>,
+                escaped: bool,
+            },
             Bare {
                 from: usize,
             },
@@ -281,6 +287,17 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
             let ch = contents[index];
             match &mut state {
                 State::Bare { from } => match ch {
+                    b'(' => {
+                        if index != *from {
+                            spans.push(make_span(*from, index));
+                        }
+                        state = State::Paren {
+                            from: index,
+                            depth: 1,
+                            quote: None,
+                            escaped: false,
+                        };
+                    }
                     b'"' | b'\'' => {
                         // Push bare string
                         if index != *from {
@@ -318,6 +335,35 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
                     // Continue to consume
                     _ => (),
                 },
+                State::Paren {
+                    from,
+                    depth,
+                    quote,
+                    escaped,
+                } => {
+                    if let Some(q) = *quote {
+                        if *escaped {
+                            *escaped = false;
+                        } else if ch == b'\\' && q == b'"' {
+                            *escaped = true;
+                        } else if ch == q {
+                            *quote = None;
+                        }
+                    } else {
+                        match ch {
+                            b'"' | b'\'' | b'`' => *quote = Some(ch),
+                            b'(' => *depth += 1,
+                            b')' => {
+                                *depth -= 1;
+                                if *depth == 0 {
+                                    spans.push(make_span(*from, index + 1));
+                                    state = State::Bare { from: index + 1 };
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 State::Quote {
                     from,
                     quote_char,
@@ -349,7 +395,8 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
 
         // Add the final span
         match state {
-            State::Bare { from }
+            State::Paren { from, .. }
+            | State::Bare { from }
             | State::Quote { from, .. }
             | State::BackTickQuote { from, .. } => {
                 if from < contents.len() {
@@ -376,9 +423,18 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
         // Parse each as its own string
         let exprs: Vec<Expression> = spans
             .into_iter()
-            .map(|span| parse_string(working_set, span))
+            .map(|span| {
+                if working_set.get_span_contents(span).starts_with(b"(") {
+                    parse_paren_expr(working_set, span, &SyntaxShape::Any)
+                } else {
+                    parse_string(working_set, span)
+                }
+            })
             .collect();
 
+        if exprs.len() == 1 && spans_entire_subexpression(&exprs[0], span) {
+            return exprs.into_iter().next().expect("one expression");
+        }
         if exprs
             .iter()
             .all(|expr| matches!(expr.expr, Expr::String(..)))
@@ -435,6 +491,10 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
     }
 }
 
+fn spans_entire_subexpression(expr: &Expression, span: Span) -> bool {
+    expr.span == span && matches!(expr.expr, Expr::FullCellPath(_) | Expr::Subexpression(_))
+}
+
 fn parse_external_arg(working_set: &mut StateWorkingSet, span: Span) -> ExternalArgument {
     let contents = working_set.get_span_contents(span);
 
@@ -458,7 +518,19 @@ fn parse_regular_external_arg(working_set: &mut StateWorkingSet, span: Span) -> 
     if contents.starts_with(b"$") {
         parse_dollar_expr(working_set, span)
     } else if contents.starts_with(b"(") {
-        parse_paren_expr(working_set, span, &SyntaxShape::Any)
+        let errors = working_set.parse_errors.len();
+        let expr = parse_full_cell_path(working_set, None, span);
+        if working_set.parse_errors.len() == errors {
+            expr
+        } else {
+            working_set.parse_errors.truncate(errors);
+            let mut expr = parse_external_string(working_set, span);
+            if let Expr::GlobInterpolation(parts, _) = expr.expr {
+                expr.expr = Expr::StringInterpolation(parts);
+                expr.ty = Type::String;
+            }
+            expr
+        }
     } else if contents.starts_with(b"[") {
         parse_list_expression(working_set, span, &SyntaxShape::Any)
     } else {
@@ -1247,6 +1319,14 @@ pub fn parse_internal_call(
             } else {
                 arg
             };
+            // Infer the loop variable before parsing the body, so expressions in
+            // the body see the element type rather than the iterable's type.
+            if signature.name == "for" && positional_idx == 1 {
+                if let Some(var_id) = call.positional_nth(0).and_then(Expression::as_var) {
+                    working_set
+                        .set_variable_type(var_id, crate::parse_keywords::iteration_type(&arg));
+                }
+            }
             call.add_positional(arg);
             positional_idx += 1;
         } else if signature.allows_unknown_args {
@@ -2004,7 +2084,11 @@ pub fn parse_paren_expr(
     if fcp_error_count > starting_error_count {
         let malformed_subexpr = working_set.parse_errors[starting_error_count..]
             .first()
-            .is_some_and(|e| matches!(e, ParseError::Unclosed(right, _) if right == ")" ));
+            .is_some_and(|e| match e {
+                ParseError::Unclosed(right, _) => right == ")",
+                ParseError::Unbalanced(_, _, _) => true,
+                _ => false,
+            });
         if malformed_subexpr {
             working_set.parse_errors.truncate(starting_error_count);
             parse_string_interpolation(working_set, span)
@@ -2170,8 +2254,8 @@ pub fn parse_string_interpolation(working_set: &mut StateWorkingSet, span: Span)
                         span,
                         Type::String,
                     ));
-                    token_start = b;
                 }
+                token_start = b;
             }
         }
 
@@ -2524,7 +2608,10 @@ pub fn parse_full_cell_path(
             if bytes.ends_with(b")") {
                 end -= 1;
             } else {
-                working_set.error(ParseError::Unclosed(")".into(), Span::new(end, end)));
+                working_set.error(ParseError::Unclosed(
+                    ")".into(),
+                    Span::new(end.saturating_sub(1), end),
+                ));
             }
 
             let span = Span::new(start, end);
@@ -3514,7 +3601,8 @@ pub fn parse_var_with_opt_type(
                 return (garbage(working_set, spans[*spans_idx - 1]), None);
             }
 
-            let id = working_set.add_variable(var_name, spans[*spans_idx - 1], ty.clone(), mutable);
+            let id = working_set.add_variable(var_name, name_span, ty.clone(), mutable);
+            working_set.set_variable_annotation(id, ty.clone());
 
             (
                 Expression::new(working_set, Expr::VarDecl(id), name_span, ty.clone()),
@@ -3758,6 +3846,8 @@ pub fn parse_row_condition(working_set: &mut StateWorkingSet, spans: &[Span]) ->
                 default_value: None,
             });
 
+            let errors = type_check::check_block_input_output(working_set, &block);
+            working_set.parse_errors.extend(errors);
             compile_block(working_set, &mut block);
 
             working_set.add_block(Arc::new(block))
@@ -3788,7 +3878,10 @@ pub fn parse_signature(working_set: &mut StateWorkingSet, span: Span) -> Express
     if (has_paren && bytes.ends_with(b")")) || (!has_paren && bytes.ends_with(b"]")) {
         end -= 1;
     } else {
-        working_set.error(ParseError::Unclosed("] or )".into(), Span::new(end, end)));
+        working_set.error(ParseError::Unclosed(
+            "] or )".into(),
+            Span::new(end.saturating_sub(1), end),
+        ));
     }
 
     let sig = parse_signature_helper(working_set, Span::new(start, end));
@@ -4435,7 +4528,10 @@ pub fn parse_list_expression(
     if bytes.ends_with(b"]") {
         end -= 1;
     } else {
-        working_set.error(ParseError::Unclosed("]".into(), Span::new(end, end)));
+        working_set.error(ParseError::Unclosed(
+            "]".into(),
+            Span::new(end.saturating_sub(1), end),
+        ));
     }
 
     let inner_span = Span::new(start, end);
@@ -4559,7 +4655,10 @@ fn parse_table_expression(
             span.end - 1
         } else {
             let end = span.end;
-            working_set.error(ParseError::Unclosed("]".into(), Span::new(end, end)));
+            working_set.error(ParseError::Unclosed(
+                "]".into(),
+                Span::new(end.saturating_sub(1), end),
+            ));
             span.end
         };
 
@@ -4676,11 +4775,7 @@ fn table_type(head: &[Expression], rows: &[Vec<Expression>]) -> (Type, Vec<Parse
         rows.iter_mut()
             .map(|row| row.pop().map(|x| x.ty).unwrap_or_default())
             .reduce(|acc, ty| -> Type {
-                if type_compatible(&acc, &ty) {
-                    ty
-                } else {
-                    Type::Any
-                }
+                if acc == ty { acc } else { Type::Any }
             })
             .unwrap_or_default()
     };
@@ -4692,12 +4787,17 @@ fn table_type(head: &[Expression], rows: &[Vec<Expression>]) -> (Type, Vec<Parse
         span,
     };
 
+    let dynamic_columns = head
+        .iter()
+        .any(|expr| matches!(expr.expr, Expr::Var(_) | Expr::FullCellPath(_)));
     let mut ty = head
         .iter()
         .rev()
         .map(|expr| {
             if let Some(str) = expr.as_string() {
                 str
+            } else if matches!(expr.expr, Expr::Var(_) | Expr::FullCellPath(_)) {
+                String::from("{ dynamic column }")
             } else {
                 errors.push(mk_error(expr.span));
                 String::from("{ column }")
@@ -4708,7 +4808,14 @@ fn table_type(head: &[Expression], rows: &[Vec<Expression>]) -> (Type, Vec<Parse
 
     ty.reverse();
 
-    (Type::Table(ty.into()), errors)
+    (
+        if dynamic_columns {
+            Type::table()
+        } else {
+            Type::Table(ty.into())
+        },
+        errors,
+    )
 }
 
 pub fn parse_block_expression(working_set: &mut StateWorkingSet, span: Span) -> Expression {
@@ -4728,7 +4835,10 @@ pub fn parse_block_expression(working_set: &mut StateWorkingSet, span: Span) -> 
     if bytes.ends_with(b"}") {
         end -= 1;
     } else {
-        working_set.error(ParseError::Unclosed("}".into(), Span::new(end, end)));
+        working_set.error(ParseError::Unclosed(
+            "}".into(),
+            Span::new(end.saturating_sub(1), end),
+        ));
     }
 
     let inner_span = Span::new(start, end);
@@ -4784,7 +4894,10 @@ pub fn parse_match_block_expression(working_set: &mut StateWorkingSet, span: Spa
     if bytes.ends_with(b"}") {
         end -= 1;
     } else {
-        working_set.error(ParseError::Unclosed("}".into(), Span::new(end, end)));
+        working_set.error(ParseError::Unclosed(
+            "}".into(),
+            Span::new(end.saturating_sub(1), end),
+        ));
     }
 
     let inner_span = Span::new(start, end);
@@ -4877,7 +4990,7 @@ pub fn parse_match_block_expression(working_set: &mut StateWorkingSet, span: Spa
         } else if connector == b"if" {
             let if_end = {
                 let end = output[position].span.end;
-                Span::new(end, end)
+                Span::new(end.saturating_sub(1), end)
             };
 
             position += 1;
@@ -4984,7 +5097,10 @@ pub fn parse_closure_expression(
     if bytes.ends_with(b"}") {
         end -= 1;
     } else {
-        working_set.error(ParseError::Unclosed("}".into(), Span::new(end, end)));
+        working_set.error(ParseError::Unclosed(
+            "}".into(),
+            Span::new(end.saturating_sub(1), end),
+        ));
     }
 
     let inner_span = Span::new(start, end);
@@ -5025,7 +5141,10 @@ pub fn parse_closure_expression(
             let end_point = if let Some(span) = end_span {
                 span.end
             } else {
-                working_set.error(ParseError::Unclosed("|".into(), Span::new(end, end)));
+                working_set.error(ParseError::Unclosed(
+                    "|".into(),
+                    Span::new(end.saturating_sub(1), end),
+                ));
                 end
             };
 
@@ -5435,7 +5554,9 @@ pub fn parse_operator(working_set: &mut StateWorkingSet, span: Span) -> Expressi
         b"has" => Operator::Comparison(Comparison::Has),
         b"not-has" => Operator::Comparison(Comparison::NotHas),
         b"starts-with" => Operator::Comparison(Comparison::StartsWith),
+        b"not-starts-with" => Operator::Comparison(Comparison::NotStartsWith),
         b"ends-with" => Operator::Comparison(Comparison::EndsWith),
+        b"not-ends-with" => Operator::Comparison(Comparison::NotEndsWith),
         b"+" => Operator::Math(Math::Add),
         b"-" => Operator::Math(Math::Subtract),
         b"*" => Operator::Math(Math::Multiply),
@@ -5652,7 +5773,7 @@ pub fn parse_math_expression(
             // Handle broken math expr `1 +` etc
             working_set.error(ParseError::IncompleteMathExpression(spans[idx - 1]));
 
-            expr_stack.push(Expression::garbage(working_set, spans[idx - 1]));
+            expr_stack.push(op);
             expr_stack.push(Expression::garbage(working_set, spans[idx - 1]));
 
             break;
@@ -5706,7 +5827,11 @@ pub fn parse_math_expression(
         }
         not_start_spans.clear();
 
-        while op_prec <= last_prec && expr_stack.len() > 1 {
+        while (op_prec < last_prec
+            || (op_prec == last_prec
+                && !matches!(op.expr, Expr::Operator(Operator::Math(Math::Pow)))))
+            && expr_stack.len() > 1
+        {
             // Collapse the right associated operations first
             // so that we can get back to a stack with a lower precedence
             let mut rhs = expr_stack
@@ -5810,7 +5935,12 @@ pub fn parse_expression(working_set: &mut StateWorkingSet, spans: &[Span]) -> Ex
             let starting_error_count = working_set.parse_errors.len();
 
             let lhs_span = Span::new(spans[pos].start, spans[pos].start + point - 1);
-            if !is_identifier(working_set.get_span_contents(lhs_span)) {
+            let lhs_bytes = working_set.get_span_contents(lhs_span);
+            if !is_identifier(lhs_bytes)
+                || lhs_bytes
+                    .iter()
+                    .any(|b| matches!(b, b'"' | b'\'' | b'`' | b'\\'))
+            {
                 break;
             }
 
@@ -6204,7 +6334,10 @@ pub fn parse_record(working_set: &mut StateWorkingSet, span: Span) -> Expression
     let (tokens, err) = (lex_state.output, lex_state.error);
 
     if unclosed {
-        working_set.error(ParseError::Unclosed("}".into(), Span::new(end, end)));
+        working_set.error(ParseError::Unclosed(
+            "}".into(),
+            Span::new(end.saturating_sub(1), end),
+        ));
     } else if extra_tokens {
         working_set.error(ParseError::ExtraTokensAfterClosingDelimiter(Span::new(
             lex_state.span_offset + 1,
@@ -7046,6 +7179,10 @@ pub fn parse(
             Arc::new(parse_block(working_set, &output, new_span, scoped, false))
         }
     };
+
+    working_set
+        .parse_errors
+        .extend(crate::loop_check::check(working_set, &output));
 
     let mut seen = vec![];
     let mut seen_blocks = HashMap::new();
